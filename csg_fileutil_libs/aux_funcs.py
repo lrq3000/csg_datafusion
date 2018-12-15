@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# Auxiliary functions library for reports extractor and dicom anonymization
-# Copyright (C) 2017-2019 Larroque Stephen
+# Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
+# Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.4.3
+# v2.4.4
 #
 
 from __future__ import absolute_import
@@ -325,6 +325,15 @@ def remove_strings_from_df(df):
     return df[df.applymap(isnumber)].applymap(float)
 
 def concat_vals(x):
+    """Concatenate after a groupby values in a list, and keep the same order (except if all values are the same or null, then return a singleton)"""
+    x = list(x)
+    if len(set(x)) == 1:
+        x = x[0]
+    elif len([y for y in x if not pd.isnull(y)]) == 0:
+        x = None
+    return x
+
+def concat_vals_unique(x):
     """Concatenate after a groupby values in a list (if not null and not unique, else return the singleton value)"""
     x = list(set([y for y in x if not pd.isnull(y)]))
     if len(x) == 1:
