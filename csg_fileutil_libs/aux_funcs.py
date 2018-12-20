@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.4.5
+# v2.4.7
 #
 
 from __future__ import absolute_import
@@ -220,13 +220,13 @@ def cleanup_name(s, encoding='latin1', normalize=True, clean_nonletters=True):
     return s
 
 # Compute best diagnosis for each patient
-def compute_best_diag(serie, diag_order=None):
+def compute_best_diag(serie, diag_order=None, persubject=True):
     """Convert a serie to a categorical type and extract the best diagnosis for each subject (patient name must be set as index level 0)
     Note: case insensitive and strip spaces automatically"""
     if diag_order is None:
         diag_order = ['coma', 'vs/uws', 'mcs', 'mcs-', 'mcs+', 'emcs', 'lis']  # from least to best
     # Convert to lowercase
-        diag_order = [x.lower().strip() for x in diag_order]
+    diag_order = [x.lower().strip() for x in diag_order]
     # Check if our list of diagnosis covers all possible in the database, else raise an error
     possible_diags = serie.str.lower().str.strip().dropna().unique()
     try:
@@ -237,7 +237,12 @@ def compute_best_diag(serie, diag_order=None):
     #for subjname, d in cf_crsr_all.groupby(level=0):
     #    print(d['CRSr::Computed Outcome'])
 
-    return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).max(level=0)
+    if persubject:
+        # Return one result per patient
+        return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).max(level=0)
+    else:
+        # Respect the original keys and return one result for each key (can be multilevel, eg subject + date)
+        return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
 
 def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.2, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False):
     """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
@@ -495,15 +500,15 @@ def df_to_unicode(df, cols=None, failsafe_encoding='iso-8859-1', skip_errors=Fal
         cols = df.columns
     for col in cols:
         for idx in df[col].index:
-            if isinstance(df[col][idx], basestring):
+            if isinstance(df.loc[idx,col], basestring):
                 try:
-                    df[col][idx] = unicode(df[col][idx])
+                    df.loc[idx,col] = unicode(df.loc[idx,col])
                 except UnicodeDecodeError as exc:
                     try:
-                        df[col][idx] = df[col][idx].decode(failsafe_encoding)
+                        df.loc[idx,col] = df.loc[idx,col].decode(failsafe_encoding)
                     except UnicodeDecodeError as exc2:
                         if skip_errors:
-                            df[col][idx] = unicode(df[col][idx], errors='ignore')
+                            df.loc[idx,col] = unicode(df.loc[idx,col], errors='ignore')
                         else:
                             raise
     return df
@@ -524,8 +529,8 @@ def df_to_unicode_fast(df, cols=None, skip_errors=False):
         serrors = 'strict'
     for col in cols:
         try:
-            df[col] = df[col].apply(lambda x: unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors=serrors) if isinstance(x, basestring) else x)
-            df[col] = df[col].astype('unicode')
+            df.loc[:, col] = df.loc[:, col].apply(lambda x: unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors=serrors) if isinstance(x, basestring) else x)
+            df.loc[:, col] = df.loc[:, col].astype('unicode')
             #df[col] = df[col].map(lambda x: x.encode('unicode-escape').decode('utf-8'))
         except Exception as exc:
             pass
