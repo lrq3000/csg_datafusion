@@ -211,9 +211,12 @@ def replace_buggy_accents(s, encoding=None):
         s = s.replace(pat, rep)
     return s
 
-def cleanup_name(s, encoding='latin1'):
-    s = _unidecode(s.decode(encoding).replace('^', ' ')).lower().strip()
-    s = re.sub('\-+', '-', re.sub('\s+', ' ', re.sub('[^a-zA-Z0-9\-]', ' ', s))).strip().replace('\r', '').replace('\n', '').replace('\t', '').replace(',', ' ').replace('  ', ' ').strip()  # clean up spaces, punctuation and double dashes in name
+def cleanup_name(s, encoding='latin1', normalize=True, clean_nonletters=True):
+    s = _unidecode(s.decode(encoding).replace('^', ' '))
+    if normalize:
+        s = s.lower().strip()
+    if clean_nonletters:
+        s = re.sub('\-+', '-', re.sub('\s+', ' ', re.sub('[^a-zA-Z0-9\-]', ' ', s))).strip().replace('\r', '').replace('\n', '').replace('\t', '').replace(',', ' ').replace('  ', ' ').strip()  # clean up spaces, punctuation and double dashes in name
     return s
 
 # Compute best diagnosis for each patient
@@ -503,4 +506,27 @@ def df_to_unicode(df, cols=None, failsafe_encoding='iso-8859-1', skip_errors=Fal
                             df[col][idx] = unicode(df[col][idx], errors='ignore')
                         else:
                             raise
+    return df
+
+def df_to_unicode_fast(df, cols=None, skip_errors=False):
+    """Ensure unicode encoding for all strings in the specified columns of a dataframe, by replacing non recognized characters by ascii equivalents. Also ensures that columns names are correctly decodable as unicode if cols=None.
+    If cols=None, will walk through all columns.
+    If failing to convert to unicode, will use failsafe_encoding to attempt to decode.
+    If skip_errors=True, the unicode encoding will be forced by skipping undecodable characters (errors='ignore').
+    """
+    if cols is None:
+        cols = df.columns
+        # Ensure column names are unicode
+        df.columns = [unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
+    if skip_errors:
+        serrors = 'ignore'
+    else:
+        serrors = 'strict'
+    for col in cols:
+        try:
+            df[col] = df[col].apply(lambda x: unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors=serrors) if isinstance(x, basestring) else x)
+            df[col] = df[col].astype('unicode')
+            #df[col] = df[col].map(lambda x: x.encode('unicode-escape').decode('utf-8'))
+        except Exception as exc:
+            pass
     return df
