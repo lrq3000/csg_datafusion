@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.4.4
+# v2.4.5
 #
 
 from __future__ import absolute_import
@@ -80,7 +80,7 @@ def save_dict_as_csv(d, output_file, fields_order=None, csv_order_by=None, verbo
     return True
 
 
-def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_index=False, verbose=False):
+def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_index=False, encoding='utf-8', verbose=False, **kwargs):
     """Save a dataframe in a csv"""
     # Define CSV fields order
     # If we were provided a fields_order list, we will show them first, else we create an empty fields_order
@@ -99,7 +99,7 @@ def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_in
         d = d.sort_values(csv_order_by)
     else:
         d = d.sort_index()
-    d.to_csv(output_file, sep=';', index=keep_index, columns=fields_order)
+    d.to_csv(output_file, sep=';', index=keep_index, columns=fields_order, encoding=encoding, **kwargs)
     return True
 
 
@@ -481,3 +481,26 @@ def df_concatenate_all_but(cf, col, setindex=False):
     if setindex:
         cf.set_index(col, inplace=True)
     return cf
+
+def df_to_unicode(df, cols=None, failsafe_encoding='iso-8859-1', skip_errors=False):
+    """Ensure unicode encoding for all strings in the specified columns of a dataframe.
+    If cols=None, will walk through all columns.
+    If failing to convert to unicode, will use failsafe_encoding to attempt to decode.
+    If skip_errors=True, the unicode encoding will be forced by skipping undecodable characters (errors='ignore').
+    """
+    if cols is None:
+        cols = df.columns
+    for col in cols:
+        for idx in df[col].index:
+            if isinstance(df[col][idx], basestring):
+                try:
+                    df[col][idx] = unicode(df[col][idx])
+                except UnicodeDecodeError as exc:
+                    try:
+                        df[col][idx] = df[col][idx].decode(failsafe_encoding)
+                    except UnicodeDecodeError as exc2:
+                        if skip_errors:
+                            df[col][idx] = unicode(df[col][idx], errors='ignore')
+                        else:
+                            raise
+    return df
