@@ -7,9 +7,5 @@ Please place all original databases in a folder "databases_original". After runn
 5- stats_analysis_fmp_dicoms_db
 6- stats_analysis_fmp_dicoms_db_acute
 7- db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps)
-
 8- optional: ecg_db_generator
-
-TODO: dicoms check if rootpath, then stats_analysis_fmp_dicoms_db and acute (+ update to filter by parent folder name: if sedated, non sedated or unknown add a column "DicomFolderSedation"), then finally merge all db together
-
 
