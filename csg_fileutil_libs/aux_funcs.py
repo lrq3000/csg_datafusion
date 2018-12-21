@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.4.7
+# v2.4.8
 #
 
 from __future__ import absolute_import
@@ -399,9 +399,9 @@ def df_drop_duplicated_index(df):
     """Drop all duplicated indices in a dataframe or series"""
     return df[~df.index.duplicated(keep='first')]
 
-def cleanup_name_df(cf):
+def cleanup_name_df(cf, col='name'):
     """Cleanup the name field of a dataframe"""
-    cf['name'] = cf['name'].apply(lambda name: cleanup_name(name))
+    cf[col] = cf[col].apply(lambda name: cleanup_name(name))
     return cf
     #for c in cf.itertuples():  # DEPRECATED: itertuples() is limited to 255 columns in Python < 3.7, prefer to avoid this approach
     #    try:
