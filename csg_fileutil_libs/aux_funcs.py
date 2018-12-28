@@ -4,11 +4,12 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.4.8
+# v2.4.12
 #
 
 from __future__ import absolute_import
 
+import ast
 import csv
 import os
 import re
@@ -244,12 +245,42 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         # Respect the original keys and return one result for each key (can be multilevel, eg subject + date)
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
 
-def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.2, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False):
+def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.2, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, verbose=False):
     """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
     mode=0 is or test, 1 is and test.
     keep_nulls=True if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
     """
-    dmerge = []
+    # Preparing the input dataframes
+    # Find and rename any column "Name" or "NAME" to lowercase "name"
+    df1 = df_cols_lower(df1, col=col)
+    df2 = df_cols_lower(df2, col=col)
+    # drop all rows where all cells are empty or where name is empty (necessary else this will produce an error, we expect the name to exist)
+    df1 = df1.dropna(how='all').dropna(how='any', subset=[col])
+    df2 = df2.dropna(how='all').dropna(how='any', subset=[col])
+    # Rename all columns if user wants, except the key columns (else the merge would not work) - this is an alternative to automatic column renaming in case of conflict
+    if prependcols is not None and len(prependcols) == 2:
+        df1.rename(columns={c: prependcols[0]+c for c in df1.columns.drop(col)}, inplace=True)
+        df2.rename(columns={c: prependcols[1]+c for c in df2.columns.drop(col)}, inplace=True)
+    # Check if columns are colluding (ie, apart from keys, some columns have the same name) then rename them by prepending "a." and "b."
+    cols_conflict = set(df1.columns).intersection(set(df2.columns)).difference(set([col]))
+    if len(cols_conflict) > 0:
+        if verbose:
+            print('Warning: columns naming conflicts detected: will automatically rename the following columns to avoid issues: %s' % str(cols_conflict))
+        df1.rename(columns={c: 'a.'+c for c in cols_conflict}, inplace=True)
+        df2.rename(columns={c: 'b.'+c for c in cols_conflict}, inplace=True)
+    # Make a backup of the original name
+    df1[col+'_orig'] = df1[col]
+    df2[col+'_orig2'] = df2[col]
+    # if doing multiple consecutive merges, a name can in fact be a list of concatenated names, then extract the first name in the list
+    # TODO: enhance this to account for all names when comparing
+    df1[col] = df1[col].apply(lambda x: df_literal_eval(x)[0] if isinstance(df_literal_eval(x), list) else x)
+    df2[col] = df2[col].apply(lambda x: df_literal_eval(x)[0] if isinstance(df_literal_eval(x), list) else x)
+    # keep only the lastname (supposed to be first), this can ease comparison
+    if keep_lastname_only:
+        df1[col] = df1[col].apply(lambda x: x.split()[0])
+        df2[col] = df2[col].apply(lambda x: x.split()[0])
+    # Prepare merging variables
+    dmerge = []  # result of the merge mapping
     list_names1 = df1[col].unique()
     list_names2 = df2[col].unique()
     # Find all similar names in df2 compared to df1 (missing names will be None)
@@ -295,12 +326,12 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                 assert dmerge[dmerge[col] == n].count().max() <= 1
             except AssertionError as exc:
                 raise AssertionError('Conflict found: a subject has more than one mapping! Subject: %s %s' % (n, dmerge[dmerge[col] == n]))
-
+    # Mapping finished
     if not returnmerged:
-        # Result!
+        # Return merge mapping result!
         return dmerge
     else:
-        # Return not only the ID merge result but the merge of the whole databases (ie, all columns)
+        # Return not only the ID merge result but a unified DataFrame merging both whole databases (ie, all columns)
         if keep_nulls is True:
             # Recopy empty matchs from the other database (so that we don't lose them after the final merge)
             dmerge.loc[dmerge[col].isnull(), col] = dmerge[col+'2']
@@ -319,6 +350,21 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
         df2 = df_concatenate_all_but(df2, col, setindex=False)
         # Final merge of all columns
         dfinal = pd.merge(df1, df2, how='outer', on=col)
+        # Keep log of original names from both databases, by creating other columns "_altx_orig", "_altx_orig2" and "_anyx" to store the name from 2nd database and create a column with any name from first db or second db
+        for x in range(1000):
+            # If we do multiple merge, we will have multiple name_alt columns: name_alt0, name_alt1, etc
+            if not (col+'_alt%i' % (x+1)) in dfinal.columns:
+                # Rename the name column from the 2nd database
+                dfinal.insert(1, (col+'_alt%i_orig' % (x+1)), dfinal[col+'_orig']) # insert the column just after 'name' for ergonomy
+                dfinal.insert(2, (col+'_alt%i_orig2' % (x+1)), dfinal[col+'_orig2'])
+
+                # Finally delete the useless column (that we copied over to name_altx)
+                del dfinal[col+'_orig']
+                del dfinal[col+'_orig2']
+
+                # Finish!
+                break
+        # Return both the merge mapping and the final merged database
         return (dmerge, dfinal)
 
 def remove_strings_from_df(df):
@@ -534,4 +580,19 @@ def df_to_unicode_fast(df, cols=None, skip_errors=False):
             #df[col] = df[col].map(lambda x: x.encode('unicode-escape').decode('utf-8'))
         except Exception as exc:
             pass
+    return df
+
+def df_literal_eval(x):
+    """Evaluate each string cell of a DataFrame as if it was a Python object, and return the Python object"""
+    try:
+        return(ast.literal_eval(x))
+    except (SyntaxError, ValueError):
+        return x
+
+def df_cols_lower(df, col='name'):
+    """Find in a DataFrame any column matching the col argument in lowercase and rename all found columns to lowercase"""
+    # Find and rename any column "Name" or "NAME" to lowercase "name"
+    namecols = df.columns[[True if x.lower() == col.lower() else False for x in df.columns]]
+    if len(namecols) > 0:
+        df = df.rename(columns={x: x.lower() for x in namecols})
     return df
