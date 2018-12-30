@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.5.0
+# v2.5.1
 #
 
 from __future__ import absolute_import
@@ -246,11 +246,12 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         # Respect the original keys and return one result for each key (can be multilevel, eg subject + date)
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
 
-def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.2, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, verbose=False, **kwargs):
+def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.2, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, verbose=False, **kwargs):
     """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
     mode=0 is or test, 1 is and test.
-    keep_nulls=True if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
-    col can either be a string for a merge based on a single column (usually name), or an OrderedDict of multiple columns names and types, following this formatting: [OrderedDict([('column1_name', 'column1_type'), ('column2_name', 'column2_type')]), OrderedDict([...])] so that you have one ordered dict for each input dataframe, and with the same number of columns (even if the names are different) and in the same order (eg, name is first column, date of acquisition as second column, etc)
+    `keep_nulls=True` if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
+    `col` can either be a string for a merge based on a single column (usually name), or an OrderedDict of multiple columns names and types, following this formatting: [OrderedDict([('column1_name', 'column1_type'), ('column2_name', 'column2_type')]), OrderedDict([...])] so that you have one ordered dict for each input dataframe, and with the same number of columns (even if the names are different) and in the same order (eg, name is first column, date of acquisition as second column, etc)
+    If `fillna=True`, subjects with multiple rows/sessions will be squashed and rows with missing infos will be completed from rows where the info is available (in case there are multiple information, they will all be present as a list). This is only useful when merging (and hence argument `col`) is multi-columns. The key columns are never filled, even if `fillna=True`.
     """
     ### Preparing the input dataframes
     # If the key column is in fact a list of columns (so we will merge on multiple columns), we first extract and rename the id columns for ease
@@ -396,6 +397,12 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                     # other types: we do nothing (the id type is already taken care of at the beginning of the function, the rest is undefined at the moment)
             # Final merge of all columns
             dfinal = pd.merge(df1, df2, how='outer', left_on=keycol[0].keys(), right_on=keycol[1].keys(), **kwargs)
+            # Filling gaps by squashing per subject id and trying to fill the missing fields from another row of the same subject where the information is present
+            if fillna:
+                # Generate an aggregate only based on id
+                dfinal_agg = dfinal.drop(columns=[colname for kcol in keycol for colname, coltype in kcol.items() if coltype != 'id']).fillna('').groupby(by=col, sort=False).agg(concat_vals_unique)
+                # Fill nan values from other rows of the same subject, by using pandas.combine_first() function
+                dfinal = dfinal.set_index(col).combine_first(dfinal_agg.reset_index().set_index(col)).reset_index()
         # Keep log of original names from both databases, by creating other columns "_altx_orig", "_altx_orig2" and "_anyx" to store the name from 2nd database and create a column with any name from first db or second db
         for x in range(1000):
             # If we do multiple merge, we will have multiple name_alt columns: name_alt0, name_alt1, etc
@@ -408,7 +415,7 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                 del dfinal[col+'_orig']
                 del dfinal[col+'_orig2']
 
-                # Finish!
+                # Finish! We found an non existent alt%i number so we can just stop here
                 break
         # Return both the merge mapping and the final merged database
         return (dmerge, dfinal)
@@ -426,21 +433,47 @@ def remove_strings_from_df(df):
 
 def concat_vals(x):
     """Concatenate after a groupby values in a list, and keep the same order (except if all values are the same or null, then return a singleton). This is similar to groupby(col).agg(list) but this function returns a singleton whenever possible (for readability)."""
-    x = list(x)
-    if len(set(x)) == 1:
-        x = x[0]
-    elif len([y for y in x if not pd.isnull(y)]) == 0:
-        x = None
+    try:
+        x = list(x)
+        if len(sort_and_deduplicate(x)) == 1:
+            x = x[0]
+        elif len([y for y in x if (isinstance(y, list) or not pd.isnull(y)) and (hasattr(y, '__len__') and len(y) > 0)]) == 0:
+            x = None
+    except Exception as exc:
+        # Warning: pd.groupby().agg(concat_vals) can drop columns without a notice if an exception happens during the execution of the function
+        print('Warning: aggregation using concat_vals() met with an exception, at least one column will be dropped!')
+        print(exc)
+        raise
     return x
 
 def concat_vals_unique(x):
     """Concatenate after a groupby values in a list (if not null and not unique, else return the singleton value)"""
-    x = list(set([y for y in x if not pd.isnull(y)]))
-    if len(x) == 1:
-        x = x[0]
-    elif len(x) == 0:
-        x = None
+    try:
+        x = list(sort_and_deduplicate([y for y in x if (isinstance(y, list) or not pd.isnull(y)) and (hasattr(y, '__len__') and len(y) > 0)]))
+        if len(x) == 1:
+            x = x[0]
+        elif len(x) == 0:
+            x = None
+    except Exception as exc:
+        # Warning: pd.groupby().agg(concat_vals) can drop columns without a notice if an exception happens during the execution of the function
+        print('Warning: aggregation using concat_vals_unique() met with an exception, at least one column will be dropped!')
+        print(exc)
+        raise
     return x
+
+def uniq(lst):
+    # From https://stackoverflow.com/questions/13464152/typeerror-unhashable-type-list-when-using-built-in-set-function
+    last = object()
+    for item in lst:
+        if item == last:
+            continue
+        yield item
+        last = item
+
+def sort_and_deduplicate(l):
+    """Alternative to using set(list()) with no computational overhead, since set() is limited to hashable types (hence not lists)"""
+    # From https://stackoverflow.com/questions/13464152/typeerror-unhashable-type-list-when-using-built-in-set-function
+    return list(uniq(sorted(l, reverse=True)))
 
 def concat_strings(serie, prefix='', sep=''):
     """Concatenate multiple columns as one string. Can add a prefix to make sure Pandas saves the column as a string (and does not trim leading 0)"""
