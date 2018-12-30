@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.5.1
+# v2.5.2
 #
 
 from __future__ import absolute_import
@@ -403,6 +403,18 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                 dfinal_agg = dfinal.drop(columns=[colname for kcol in keycol for colname, coltype in kcol.items() if coltype != 'id']).fillna('').groupby(by=col, sort=False).agg(concat_vals_unique)
                 # Fill nan values from other rows of the same subject, by using pandas.combine_first() function
                 dfinal = dfinal.set_index(col).combine_first(dfinal_agg.reset_index().set_index(col)).reset_index()
+            # Create new columns merging key columns info (similarly to names), this can be useful for further merge (ie, to use one merged key column instead of two different)
+            for kcol1, kcol2 in zip(keycol[0].items(), keycol[1].items()):
+                col1name, col1type = kcol1
+                col2name, col2type = kcol2
+                if col1type != 'id':
+                    colcombined = col1name+' + '+col2name
+                    # Copy from first dataframe's key column values
+                    dfinal[col1name+' + '+col2name] = dfinal[col1name]
+                    # Copy datatype from the original dataframe. Since pandas.merge() loses the datatype info of the columns after merging, we need to use the original dataframes where we already converted the key columns to the correct datatypes: https://stackoverflow.com/questions/29280393/python-pandas-merge-loses-categorical-columns
+                    dfinal[col1name+' + '+col2name].astype(df1[col1name].dtype, inplace=True)
+                    # Finally, where there is an empty value, copy from the second dataframe's (from the corresponding key column)
+                    dfinal.loc[dfinal[col1name].isnull(), colcombined] = dfinal[col2name]
         # Keep log of original names from both databases, by creating other columns "_altx_orig", "_altx_orig2" and "_anyx" to store the name from 2nd database and create a column with any name from first db or second db
         for x in range(1000):
             # If we do multiple merge, we will have multiple name_alt columns: name_alt0, name_alt1, etc
@@ -520,7 +532,7 @@ def convert_to_datetype(df, col, dtformat, **kwargs):
     try:
         df[col] = pd.to_datetime(df[col], format=dtformat, **kwargs)
     except Exception as exc:
-        print('Warning: cannot convert column %s as datetype using pandas.to_datetime() and formatting %s and supplied format, falling back to fuzzy matching date format (there might introduce errors, you should check afterward manually)...' % (col, dtformat))
+        print('Warning: cannot convert column %s as datetype using pandas.to_datetime() and formatting %s and supplied format, falling back to fuzzy matching date format (this might introduce buggy dates, you should check manually afterwards)...' % (col, dtformat))
         df = df_date_clean(df, col)
     return df
 
