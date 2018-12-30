@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.5.2
+# v2.5.4
 #
 
 from __future__ import absolute_import
@@ -82,8 +82,13 @@ def save_dict_as_csv(d, output_file, fields_order=None, csv_order_by=None, verbo
     return True
 
 
-def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_index=False, encoding='utf-8', verbose=False, **kwargs):
-    """Save a dataframe in a csv"""
+def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_index=False, encoding='utf-8', blankna=False, verbose=False, **kwargs):
+    """Save a dataframe in a csv
+    fields_order allows to precise what columns to put first (you don't need to specify all columns, only the ones you want first, the rest being alphabetically ordered). If None, alphabetical order will be used.
+    csv_order_by allows to order rows according to the alphabetical order of the specified column(s)
+    keep_index will save rows indices in the csv if True
+    blankna fills None, NaN and NaT with an empty string ''. This can be useful for 2 purposes: 1) more human readability, 2) pandas will more easily understand a field is empty, even if the correct datatype is not set (eg, datetime null value is NaT, but at loading the column will be type 'object' which means NaT values won't be considered null).
+    """
     # Define CSV fields order
     # If we were provided a fields_order list, we will show them first, else we create an empty fields_order
     if fields_order is None:
@@ -95,6 +100,10 @@ def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_in
             fields_order.append(missing_field)
     if verbose:
         print('CSV fields order: '+str(fields_order))
+    # Blank none values
+    if blankna:
+        d = d.fillna('')
+        d[d.isna() | (d == 'None') | (d == 'NONE') | (d == 'none') | (d == 'NaN') | (d == 'nan') | (d == 'NaT') | (d == 'nat') | (d == 'na') | (d == 'NA') | (d == 'N/A')] = ''  # replace also any null value hidden as a string
 
     # Write the csv
     if csv_order_by is not None:
@@ -396,9 +405,20 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                         df = convert_to_datetype(df, colname, coltype.split('|')[1])
                     # other types: we do nothing (the id type is already taken care of at the beginning of the function, the rest is undefined at the moment)
             # Final merge of all columns
+            #return df1, df2  # debug: in case of bug, return df1 and df2 and try to do the subsequent commands in a notebook, easiest way to debug
             dfinal = pd.merge(df1, df2, how='outer', left_on=keycol[0].keys(), right_on=keycol[1].keys(), **kwargs)
             # Filling gaps by squashing per subject id and trying to fill the missing fields from another row of the same subject where the information is present
             if fillna:
+                # Drop duplicated columns (probably the 'index_x' and 'index_y' that are produced automatically by a previous pd.merge()), this is necessary else groupby().agg() will fail on dataframes with duplicated columns: https://stackoverflow.com/questions/27719407/pandas-concat-valueerror-shape-of-passed-values-is-blah-indices-imply-blah2
+                if not dfinal.columns.is_unique:
+                    print('Duplicated columns found, dropping them automatically: %s' % dfinal.columns[dfinal.columns.duplicated()])
+                    dfinal = dfinal.drop(columns=dfinal.columns[dfinal.columns.duplicated()])
+                    if not dfinal.columns.is_unique:
+                        raise ValueError('There are still duplicated columns! Please contact the developer to fix the issue!')
+                # Drop duplicated rows (can only be done if columns are deduplicated)
+                if not dfinal.index.is_unique:
+                    print('Duplicated rows found, dropping them automatically, please contact the developer to fix this issue (as this should not happen!).')
+                    dfinal = dfinal.drop_duplicates(keep='first')
                 # Generate an aggregate only based on id
                 dfinal_agg = dfinal.drop(columns=[colname for kcol in keycol for colname, coltype in kcol.items() if coltype != 'id']).fillna('').groupby(by=col, sort=False).agg(concat_vals_unique)
                 # Fill nan values from other rows of the same subject, by using pandas.combine_first() function
@@ -414,11 +434,11 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                     # Copy datatype from the original dataframe. Since pandas.merge() loses the datatype info of the columns after merging, we need to use the original dataframes where we already converted the key columns to the correct datatypes: https://stackoverflow.com/questions/29280393/python-pandas-merge-loses-categorical-columns
                     dfinal[col1name+' + '+col2name].astype(df1[col1name].dtype, inplace=True)
                     # Finally, where there is an empty value, copy from the second dataframe's (from the corresponding key column)
-                    dfinal.loc[dfinal[col1name].isnull(), colcombined] = dfinal[col2name]
+                    dfinal.loc[dfinal[col1name].isnull(), colcombined] = df2[col2name]
         # Keep log of original names from both databases, by creating other columns "_altx_orig", "_altx_orig2" and "_anyx" to store the name from 2nd database and create a column with any name from first db or second db
         for x in range(1000):
             # If we do multiple merge, we will have multiple name_alt columns: name_alt0, name_alt1, etc
-            if not (col+'_alt%i' % (x+1)) in dfinal.columns:
+            if not (col+'_alt%i_orig' % (x+1)) and not (col+'_alt%i_orig2' % (x+1)) in dfinal.columns:
                 # Rename the name column from the 2nd database
                 dfinal.insert(1, (col+'_alt%i_orig' % (x+1)), dfinal[col+'_orig']) # insert the column just after 'name' for ergonomy
                 dfinal.insert(2, (col+'_alt%i_orig2' % (x+1)), dfinal[col+'_orig2'])
@@ -459,7 +479,8 @@ def concat_vals(x):
     return x
 
 def concat_vals_unique(x):
-    """Concatenate after a groupby values in a list (if not null and not unique, else return the singleton value)"""
+    """Concatenate after a groupby values in a list (if not null and not unique, else return the singleton value)
+    Please make sure your DataFrame contains only unique columns, else you might get a weird error: https://stackoverflow.com/questions/27719407/pandas-concat-valueerror-shape-of-passed-values-is-blah-indices-imply-blah2"""
     try:
         x = list(sort_and_deduplicate([y for y in x if (isinstance(y, list) or not pd.isnull(y)) and (hasattr(y, '__len__') and len(y) > 0)]))
         if len(x) == 1:
@@ -734,7 +755,7 @@ def date_clean(s):
         return None
     else:
         # Clean non date characters (might choke the date parser)
-        cleaned_date = date_fr2en(date_cleanchar(s))
+        cleaned_date = date_fr2en(date_cleanchar(str(s))) # convert to str so that if we get a datetime object, we do not get an error
         if not cleaned_date:
             return None
         else:
@@ -756,5 +777,5 @@ def date_clean(s):
 
 def df_date_clean(df, col):
     """Apply fuzzy date cleaning (and datetype conversion) to a dataframe's column"""
-    df[col] = df[col].apply(date_clean)
+    df[col] = df[col].apply(date_clean).astype('datetime64')
     return df
