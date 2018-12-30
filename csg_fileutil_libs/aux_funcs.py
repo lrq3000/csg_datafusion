@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.5.4
+# v2.5.5
 #
 
 from __future__ import absolute_import
@@ -255,7 +255,7 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         # Respect the original keys and return one result for each key (can be multilevel, eg subject + date)
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
 
-def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.2, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, verbose=False, **kwargs):
+def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, verbose=False, **kwargs):
     """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
     mode=0 is or test, 1 is and test.
     `keep_nulls=True` if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
@@ -438,10 +438,12 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
         # Keep log of original names from both databases, by creating other columns "_altx_orig", "_altx_orig2" and "_anyx" to store the name from 2nd database and create a column with any name from first db or second db
         for x in range(1000):
             # If we do multiple merge, we will have multiple name_alt columns: name_alt0, name_alt1, etc
-            if not (col+'_alt%i_orig' % (x+1)) and not (col+'_alt%i_orig2' % (x+1)) in dfinal.columns:
+            alt_id = col+'_alt%i_orig' % (x+1)
+            alt_id2 = col+'_alt%i_orig2' % (x+1)
+            if not alt_id in dfinal.columns and not alt_id2 in dfinal.columns:
                 # Rename the name column from the 2nd database
-                dfinal.insert(1, (col+'_alt%i_orig' % (x+1)), dfinal[col+'_orig']) # insert the column just after 'name' for ergonomy
-                dfinal.insert(2, (col+'_alt%i_orig2' % (x+1)), dfinal[col+'_orig2'])
+                dfinal.insert(1, alt_id, dfinal[col+'_orig']) # insert the column just after 'name' for ergonomy
+                dfinal.insert(2, alt_id2, dfinal[col+'_orig2'])
 
                 # Finally delete the useless column (that we copied over to name_altx)
                 del dfinal[col+'_orig']
