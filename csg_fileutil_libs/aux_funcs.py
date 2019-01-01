@@ -10,9 +10,9 @@
 from __future__ import absolute_import
 
 import ast
-import csv
 import os
 import re
+import unicodecsv as csv
 from .dateutil import parser as dateutil_parser
 from .distance import distance
 
