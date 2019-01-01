@@ -10,6 +10,7 @@
 from __future__ import absolute_import
 
 import ast
+import copy
 import os
 import re
 import unicodecsv as csv
@@ -655,6 +656,17 @@ def df_concatenate_all_but(cf, col, setindex=False):
     if setindex:
         cf.set_index(col, inplace=True)
     return cf
+
+def dict_to_unicode(d):
+    """Convert a dict of dict to unicode in order to be able to save via csv.DictWriter()
+    See also: https://stackoverflow.com/questions/5838605/python-dictwriter-writing-utf-8-encoded-csv-files"""
+    d2 = copy.deepcopy(d)
+    for k, v in d2.items():
+        if isinstance(v, dict):
+            d2[k] = {k2:v2.encode('utf8') for k2,v2 in v.items()}
+        else:
+            d2[k] = v.encode('utf8')
+    return d2
 
 def df_to_unicode(df, cols=None, failsafe_encoding='iso-8859-1', skip_errors=False):
     """Ensure unicode encoding for all strings in the specified columns of a dataframe.
