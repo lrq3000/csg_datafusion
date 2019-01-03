@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.6.0
+# v2.6.3
 #
 
 from __future__ import absolute_import
@@ -773,7 +773,8 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False)
             #encoding = chardet.detect(''.join(df.loc[:, col]))['encoding']
             allvals = (x if isinstance(x, basestring) else str(x) for _, x in df.loc[:, col].items())
             encoding = chardet.detect(''.join(allvals))['encoding']
-            df.loc[:, col] = df.loc[:, col].apply(lambda x: x.decode(encoding, errors=serrors) if isinstance(x, str) else x)
+            if encoding:
+                df.loc[:, col] = df.loc[:, col].apply(lambda x: x.decode(encoding, errors=serrors) if isinstance(x, str) else x)
             df.loc[:, col] = df.loc[:, col].astype('unicode')
             #df[col] = df[col].map(lambda x: x.encode('unicode-escape').decode('utf-8'))
         except Exception as exc:
@@ -910,3 +911,30 @@ def df_date_clean(df_in, col):
     df = df_in.copy()
     df[col] = df[col].apply(date_clean).astype('datetime64')
     return df
+
+def clean_integer_score(x):
+    """Converts x from potentially a float or string into a clean integer, and replace NA and NP values with one string character"""
+    try:
+        x = str(int(float(x)))
+    except Exception as exc:
+        if isinstance(x, basestring):
+            pass
+        else:
+            raise
+    x = x.lower().strip()
+    return 'A' if x == 'na (not assesible)' else 'P' if x == 'np (not performed)' else x
+
+def df_subscores_concat(df, cols=None, col_out='subscore'):
+    """Create CRS-R subscores summary (eg, S123456)"""
+    if cols is None:
+        raise ValueError('Must specify which columns we take the CRS-R subscores from!')
+    if len(cols) != 6:
+        raise ValueError('The number of columns specified does not correspond to CRS-R, we need 6 columns (6 categories of items)!')
+    # We extract only the subscores in the correct order and we clean up the special values (not assesible NA and not performed NP) to replace by a single character (A and P respectively) and we replace NAN by X
+    df_subscores = df[cols].fillna('X').applymap(clean_integer_score)
+    # Make a copy to avoid side effects
+    df2 = df.copy()
+    # Then we concatenate all subscores in one string, prefixing 'S' before, and add the result as a new column
+    df2[col_out] = df_subscores.apply(lambda x: concat_strings(x, 'S'), axis=1)
+    # Return!
+    return df2
