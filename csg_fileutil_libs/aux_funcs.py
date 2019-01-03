@@ -4,16 +4,18 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.5.7
+# v2.6.0
 #
 
 from __future__ import absolute_import
 
 import ast
+import chardet
 import copy
 import os
 import re
 import unicodecsv as csv
+from collections import OrderedDict
 from .dateutil import parser as dateutil_parser
 from .distance import distance
 
@@ -83,22 +85,28 @@ def save_dict_as_csv(d, output_file, fields_order=None, csv_order_by=None, verbo
     return True
 
 
-def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_index=False, encoding='utf-8', blankna=False, verbose=False, **kwargs):
+def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_index=False, encoding='utf-8-sig', blankna=False, excel=False, verbose=False, **kwargs):
     """Save a dataframe in a csv
-    fields_order allows to precise what columns to put first (you don't need to specify all columns, only the ones you want first, the rest being alphabetically ordered). If None, alphabetical order will be used.
+    fields_order allows to precise what columns to put first (you don't need to specify all columns, only the ones you want first, the rest being alphabetically ordered). If None, alphabetical order will be used. If False, the original order will be used.
     csv_order_by allows to order rows according to the alphabetical order of the specified column(s)
     keep_index will save rows indices in the csv if True
     blankna fills None, NaN and NaT with an empty string ''. This can be useful for 2 purposes: 1) more human readability, 2) pandas will more easily understand a field is empty, even if the correct datatype is not set (eg, datetime null value is NaT, but at loading the column will be type 'object' which means NaT values won't be considered null).
+    Encoding is by default 'utf-8-sig', which is UTF-8 with an encoding BOM in the file's header, this is necessary for Excel 2007 to correctly read the file (else it assumes latin-1): 
+    If excel is True, will save as an excel file (which better supports accentuated/special characters).
+    Combine with df_to_unicode() or df_to_unicode_fast() in case of encoding issues.
     """
     # Define CSV fields order
     # If we were provided a fields_order list, we will show them first, else we create an empty fields_order
     if fields_order is None:
         fields_order = []
+    elif fields_order is False:
+        fields_order = d.columns
     # Then automatically add any other field (which order we don't care, they will be appended in alphabetical order)
     fields_order_check = set(fields_order)
     for missing_field in sorted(d.columns):
         if missing_field not in fields_order_check:
             fields_order.append(missing_field)
+    d = d.reindex(columns=fields_order)  # Reindex in case we supplied an empty column
     if verbose:
         print('CSV fields order: '+str(fields_order))
     # Blank none values
@@ -111,7 +119,14 @@ def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_in
         d = d.sort_values(csv_order_by)
     else:
         d = d.sort_index()
-    d.to_csv(output_file, sep=';', index=keep_index, columns=fields_order, encoding=encoding, **kwargs)
+    if not excel:
+        if not output_file.endswith('.csv'):  # make sure the file extension is correct (else pandas will raise an error)
+            output_file += '.csv'
+        d.to_csv(output_file, sep=';', index=keep_index, columns=fields_order, encoding=encoding, **kwargs)
+    else:
+        if not output_file.endswith('.xls'):
+            output_file += '.xls'
+        d.to_excel(output_file, index=keep_index, columns=fields_order, encoding=encoding, **kwargs)
     return True
 
 
@@ -223,8 +238,13 @@ def replace_buggy_accents(s, encoding=None):
         s = s.replace(pat, rep)
     return s
 
-def cleanup_name(s, encoding='latin1', normalize=True, clean_nonletters=True):
-    s = _unidecode(s.decode(encoding).replace('^', ' '))
+def cleanup_name(s, encoding=None, normalize=True, clean_nonletters=True):
+    """Clean a name and remove accentuated characters"""
+    if encoding is None:
+        encoding = chardet.detect(s)['encoding']
+    if encoding:
+        s = s.decode(encoding)
+    s = _unidecode(s.replace('^', ' '))
     if normalize:
         s = s.lower().strip()
     if clean_nonletters:
@@ -258,7 +278,7 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
 
 def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, verbose=False, **kwargs):
     """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
-    mode=0 is or test, 1 is and test.
+    mode=0 is or test, 1 is and test. In other words, this is a join with fuzzy matching on one column (based on name/id) but supporting multiple columns with exact matching for the others.
     `keep_nulls=True` if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
     `col` can either be a string for a merge based on a single column (usually name), or an OrderedDict of multiple columns names and types, following this formatting: [OrderedDict([('column1_name', 'column1_type'), ('column2_name', 'column2_type')]), OrderedDict([...])] so that you have one ordered dict for each input dataframe, and with the same number of columns (even if the names are different) and in the same order (eg, name is first column, date of acquisition as second column, etc)
     If `fillna=True`, subjects with multiple rows/sessions will be squashed and rows with missing infos will be completed from rows where the info is available (in case there are multiple information, they will all be present as a list). This is only useful when merging (and hence argument `col`) is multi-columns. The key columns are never filled, even if `fillna=True`.
@@ -287,6 +307,9 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
     # Find and rename any column "Name" or "NAME" to lowercase "name"
     df1 = df_cols_lower(df1, col=col)
     df2 = df_cols_lower(df2, col=col)
+    col = col.lower()  # lowercase also the id column
+    #if keycol:  # lowercase also the other key columns
+        #keycol = [OrderedDict([(k.lower(), v) for k,v in kcol.items()]) for kcol in keycol]
     # drop all rows where all cells are empty or where name is empty (necessary else this will produce an error, we expect the name to exist)
     df1 = df1.dropna(how='all').dropna(how='any', subset=[col])
     df2 = df2.dropna(how='all').dropna(how='any', subset=[col])
@@ -513,11 +536,11 @@ def sort_and_deduplicate(l):
 
 def concat_strings(serie, prefix='', sep=''):
     """Concatenate multiple columns as one string. Can add a prefix to make sure Pandas saves the column as a string (and does not trim leading 0)"""
-    return prefix+sep.join([x if isinstance(x, str) else str(int(x)) if not pd.isnull(x) else '' for x in serie])
+    return prefix+sep.join([x if isinstance(x, (str,unicode)) else str(int(x)) if not pd.isnull(x) else '' for x in serie])
 
 def find_columns_matching(df, L, startswith=False):
     """Find all columns of a DataFrame matching one string of the given list (case insensitive)"""
-    if isinstance(L, str):
+    if isinstance(L, (str,unicode)):
         L = [L]
     L = [l.lower() for l in L]
     matching_columns = []
@@ -551,31 +574,34 @@ def df_remap_names(df, dfremap, col='name', col2='name2', keep_nulls=False):
 
 def convert_to_datetype(df, col, dtformat, **kwargs):
     """Convert a column of a dataframe to date type with the given format"""
-    if not df.index.name is None:
-        df = df.reset_index()
+    df2 = df.copy()
+    if not df2.index.name is None:
+        df2 = df2.reset_index()
     try:
-        df[col] = pd.to_datetime(df[col], format=dtformat, **kwargs)
+        df2[col] = pd.to_datetime(df2[col], format=dtformat, **kwargs)
     except Exception as exc:
         print('Warning: cannot convert column %s as datetype using pandas.to_datetime() and formatting %s and supplied format, falling back to fuzzy matching date format (this might introduce buggy dates, you should check manually afterwards)...' % (col, dtformat))
-        df = df_date_clean(df, col)
-    return df
+        df2 = df_date_clean(df2, col)
+    return df2
 
 def df_drop_duplicated_index(df):
     """Drop all duplicated indices in a dataframe or series"""
-    return df[~df.index.duplicated(keep='first')]
+    df2 = df.copy()
+    return df2[~df2.index.duplicated(keep='first')]
 
-def cleanup_name_df(cf, col='name'):
+def cleanup_name_df(df, col='name'):
     """Cleanup the name field of a dataframe"""
-    cf[col] = cf[col].apply(lambda name: cleanup_name(name))
-    return cf
-    #for c in cf.itertuples():  # DEPRECATED: itertuples() is limited to 255 columns in Python < 3.7, prefer to avoid this approach
+    df2 = df.copy()
+    df2[col] = df2[col].apply(lambda name: cleanup_name(name))
+    return df2
+    #for c in df2.itertuples():  # DEPRECATED: itertuples() is limited to 255 columns in Python < 3.7, prefer to avoid this approach
     #    try:
-    #        cf.loc[c.Index, 'name'] = cleanup_name(c.name)
+    #        df2.loc[c.Index, 'name'] = cleanup_name(c.name)
     #    except Exception as exc:
     #        print("An error occurred while cleaning up names in the provided dataframe, please check the following lines which might be the culprit:")
-    #        print(cf[cf['name'].isnull()])
+    #        print(df2[df2['name'].isnull()])
     #        raise
-    #return cf
+    #return df2
 
 def cleanup_name_customregex(cname, customregex=None, returnmatches=False):
     """Cleanup the input name given a custom dictionary of regular expressions (format of customregex: a dict like {'regex-pattern': 'replacement'}"""
@@ -632,30 +658,32 @@ def compute_names_distance_matrix(list1, list2, dist_threshold_letters=0.2, dist
     dist_matches = {k: (list(set(v)) if v else v) for k, v in dist_matches.items()}
     return dist_matches
 
-def disambiguate_names(cf, dist_threshold=0.2, verbose=False): # TODO: replace by the updated compute_names_distance_matrix() function?
-    """Disambiguate names in a single dataframe, in other words finds all the different (mis)spellings of the same person's name and uniformize them all, so that we can easily find all the records pertaining to a single subject. This is different from compute_names_distance_matrix() function which works on two different dataframes."""
-    cf = cf.assign(alt_names='')  # create new column alt_names with empty values by default
-    for c in cf.itertuples(): # TODO: does not work with more than 255 columns!
-        for c2 in cf.ix[c.Index+1:,:].itertuples():
-            if c.name != c2.name and \
-            (distance.nlevenshtein(c.name, c2.name, method=1) <= dist_threshold or distance_jaccard_words_split(c2.name, c.name, partial=False, norm=True, dist=dist_threshold) <= dist_threshold): # use shortest distance with normalized levenshtein
+def disambiguate_names(df, dist_threshold=0.2, col='name', verbose=False): # TODO: replace by the updated compute_names_distance_matrix() function?
+    """Disambiguate names in a single dataframe, in other words finds all the different (mis)spellings of the same person's name and uniformize them all, so that we can easily find all the records pertaining to a single subject. In other words, this is like a join with fuzzy matching on a single column and dataframe. This is different from compute_names_distance_matrix() function which works on two different dataframes."""
+    df2 = df.copy()
+    df2 = df2.assign(**{col+'_alt': ''})  # create new column name_alt with empty values by default
+    for cindex, c in _tqdm(df2.iterrows(), total=len(df2)): # Updated to use iterrows() to support more than 255 columns (because itertuples() is limited by Python 2 limit of 255 max items in a tuple, this might have changed in Python 3!)
+        for c2index, c2 in df2.ix[cindex+1:,:].iterrows():
+            if c[col] != c2[col] and \
+            (distance.nlevenshtein(c[col], c2[col], method=1) <= dist_threshold or distance_jaccard_words_split(c2[col], c[col], partial=False, norm=True, dist=dist_threshold) <= dist_threshold): # use shortest distance with normalized levenshtein
                 if verbose:
-                    print(c.name, c2.name, c2.Index, distance.nlevenshtein(c.name, c2.name, method=1))
+                    print(c[col], c2[col], c2index, distance.nlevenshtein(c[col], c2[col], method=1))
                 # Replace the name of the second entry with the name of the first entry
-                cf.ix[c2.Index, 'name'] = c.name
+                df2.loc[c2index, col] = c[col]
                 # Add the other name as an alternative name, just in case we did a mistake for example
-                cf.ix[c.Index, 'alt_names'] = cf.ix[c.Index, 'alt_names'] + '/' + c2.name if cf.ix[c.Index, 'alt_names'] else c2.name
-    return cf
+                df2.loc[cindex, col+'_alt'] = df2.loc[cindex, col+'_alt'] + '/' + c2[col] if df2.loc[cindex, col+'_alt'] else c2[col]
+    return df2
 
-def df_concatenate_all_but(cf, col, setindex=False):
+def df_concatenate_all_but(df, col, setindex=False):
     """Make sure each id (in col) is unique, else concatenate all other rows for each id into one row.
     col can either be a string for a single column name, or a list of column names to use for the aggregation."""
-    cf.loc[:,col] = cf.loc[:,col].fillna(value='')  # fill nan values with placeholder to avoid losing these rows, particularly with multiple columns as keys of groupby, this can lead to mysterious loss of rows. Indeed, pandas drops any row where the groupby key columns have a nan or nat value (in any of the key columns! Even if other key columns are filled!). There is currently no option to disable this behavior. See https://github.com/pandas-dev/pandas/issues/3729 and https://stackoverflow.com/questions/18429491/groupby-columns-with-nan-missing-values for more info.
-    cf = cf.reset_index().groupby(col, sort=False).agg(concat_vals)  # groupby the key columns and aggregate by concatenating duplicated values (using our custom function concat_vals)
-    cf.reset_index(inplace=True)
+    df2 = df.copy()
+    df2.loc[:,col] = df2.loc[:,col].fillna(value='')  # fill nan values with placeholder to avoid losing these rows, particularly with multiple columns as keys of groupby, this can lead to mysterious loss of rows. Indeed, pandas drops any row where the groupby key columns have a nan or nat value (in any of the key columns! Even if other key columns are filled!). There is currently no option to disable this behavior. See https://github.com/pandas-dev/pandas/issues/3729 and https://stackoverflow.com/questions/18429491/groupby-columns-with-nan-missing-values for more info.
+    df2 = df2.reset_index().groupby(col, sort=False).agg(concat_vals)  # groupby the key columns and aggregate by concatenating duplicated values (using our custom function concat_vals)
+    df2.reset_index(inplace=True)
     if setindex:
-        cf.set_index(col, inplace=True)
-    return cf
+        df2.set_index(col, inplace=True)
+    return df2
 
 def dict_to_unicode(d):
     """Convert a dict of dict to unicode in order to be able to save via csv.DictWriter()
@@ -668,36 +696,67 @@ def dict_to_unicode(d):
             d2[k] = v.encode('utf8')
     return d2
 
-def df_to_unicode(df, cols=None, failsafe_encoding='iso-8859-1', skip_errors=False):
+def df_to_unicode(df_in, cols=None, failsafe_encoding='iso-8859-1', skip_errors=False):
     """Ensure unicode encoding for all strings in the specified columns of a dataframe.
     If cols=None, will walk through all columns.
     If failing to convert to unicode, will use failsafe_encoding to attempt to decode.
     If skip_errors=True, the unicode encoding will be forced by skipping undecodable characters (errors='ignore').
+    If failing, try df_to_unicode_fast(), which will strip out special characters and try to replace them with the closest ascii character.
     """
-    if cols is None:
+    # Make a copy to avoid tampering the original
+    df = df_in.copy()
+    # If there is a complex index, it might contain strings, so we reset it as columns so that we can unidecode indices too, and we will restore the indices at the end
+    if df.index.dtype.name == 'object' or isinstance(df.index, pd.core.indexes.multi.MultiIndex):
+        idxbak = df.index.names
+        df.reset_index(inplace=True)
+    else:
+        idxbak = None
+    # Which columns do we have to unidecode?
+    if cols is None:  # by default, all!
+        # Ensure column names are unicode
+        df.columns = [unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
+        # By default, take all columns
         cols = df.columns
+    # Main loop
     for col in cols:
         for idx in df[col].index:
+            # Unidecode if value is a string
             if isinstance(df.loc[idx,col], basestring):
                 try:
+                    # Try default unidecode
                     df.loc[idx,col] = unicode(df.loc[idx,col])
                 except UnicodeDecodeError as exc:
+                    # If fail, we use the failsafe encoding
                     try:
                         df.loc[idx,col] = df.loc[idx,col].decode(failsafe_encoding)
                     except UnicodeDecodeError as exc2:
+                        # At worst, we can just skip errors (and unrecognized characters)
                         if skip_errors:
                             df.loc[idx,col] = unicode(df.loc[idx,col], errors='ignore')
                         else:
                             raise
+    # Restore index
+    if idxbak:
+        df.set_index(idxbak, inplace=True)
     return df
 
-def df_to_unicode_fast(df, cols=None, skip_errors=False):
-    """Ensure unicode encoding for all strings in the specified columns of a dataframe, by replacing non recognized characters by ascii equivalents. Also ensures that columns names are correctly decodable as unicode if cols=None.
+def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False):
+    """Ensure unicode encoding for all strings in the specified columns of a dataframe in a fast way, and optionally by replacing non recognized characters by ascii equivalents. Also ensures that columns names are correctly decodable as unicode if cols=None.
     If cols=None, will walk through all columns.
-    If failing to convert to unicode, will use failsafe_encoding to attempt to decode.
+    If replace_ascii, will replace special characters with the closest ASCII counterpart (using unidecode) if the conversion to unicode fails
     If skip_errors=True, the unicode encoding will be forced by skipping undecodable characters (errors='ignore').
+    The main difference with df_to_unicode() is that the former tries to maintain special characters (instead of replacing them with their closest ascii counterpart) and it is slower (but more thorough, it should not miss any field, whereas the fast version will work column by column and thus might miss a column of mixed types).
     """
-    if cols is None:
+    # Make a copy to avoid tampering the original
+    df = df_in.copy()
+    # If there is a complex index, it might contain strings, so we reset it as columns so that we can unidecode indices too, and we will restore the indices at the end
+    if df.index.dtype.name == 'object' or isinstance(df.index, pd.core.indexes.multi.MultiIndex):
+        idxbak = df.index.names
+        df.reset_index(inplace=True)
+    else:
+        idxbak = None
+    # Which columns do we have to unidecode?
+    if cols is None:  # by default, all!
         cols = df.columns
         # Ensure column names are unicode
         df.columns = [unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
@@ -706,12 +765,66 @@ def df_to_unicode_fast(df, cols=None, skip_errors=False):
     else:
         serrors = 'strict'
     for col in cols:
+        # Verify that the column is of type object, else for sure it is not a string
+        if df.loc[:, col].dtype.name != 'object':
+            continue
         try:
-            df.loc[:, col] = df.loc[:, col].apply(lambda x: unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors=serrors) if isinstance(x, basestring) else x)
+            # First try a decoding by detecting the correct encoding
+            #encoding = chardet.detect(''.join(df.loc[:, col]))['encoding']
+            allvals = (x if isinstance(x, basestring) else str(x) for _, x in df.loc[:, col].items())
+            encoding = chardet.detect(''.join(allvals))['encoding']
+            df.loc[:, col] = df.loc[:, col].apply(lambda x: x.decode(encoding, errors=serrors) if isinstance(x, str) else x)
             df.loc[:, col] = df.loc[:, col].astype('unicode')
             #df[col] = df[col].map(lambda x: x.encode('unicode-escape').decode('utf-8'))
         except Exception as exc:
-            pass
+            try:
+                # If decoding failed, we can try to replace the special characters with their closest ASCII counterpart (via unidecode)
+                if replace_ascii:
+                    df.loc[:, col] = df.loc[:, col].apply(lambda x: unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors=serrors) if isinstance(x, str) else x)
+                    df.loc[:, col] = df.loc[:, col].astype('unicode')
+                else:
+                    raise
+            except Exception as exc:
+                # Else everything failed!
+                if skip_errors:
+                    pass
+                else:
+                    print('Failed with column: %s' % col)
+                    raise
+    # Restore index
+    if idxbak:
+        df.set_index(idxbak, inplace=True)
+    return df
+
+def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False):
+    # Make a copy to avoid tampering the original
+    df = df_in.copy()
+    # If there is a complex index, it might contain strings, so we reset it as columns so that we can unidecode indices too, and we will restore the indices at the end
+    if df.index.dtype.name == 'object' or isinstance(df.index, pd.core.indexes.multi.MultiIndex):
+        idxbak = df.index.names
+        df.reset_index(inplace=True)
+    else:
+        idxbak = None
+    # Which columns do we have to unidecode?
+    if cols is None:  # by default, all!
+        cols = df.columns
+    # Main loop
+    for col in cols:
+        for idx in df[col].index:
+            # Unidecode if value is a string
+            if isinstance(df.loc[idx,col], (basestring, unicode)):
+                try:
+                    # Try default unidecode
+                    df.loc[idx,col] = df.loc[idx,col].encode('utf-8')
+                except UnicodeDecodeError as exc:
+                    # At worst, we can just skip errors (and unrecognized characters)
+                    if skip_errors:
+                        df.loc[idx,col] = _unidecode(df.loc[idx,col])
+                    else:
+                        raise
+    # Restore index
+    if idxbak:
+        df.set_index(idxbak, inplace=True)
     return df
 
 def df_literal_eval(x):
@@ -721,8 +834,10 @@ def df_literal_eval(x):
     except (SyntaxError, ValueError):
         return x
 
-def df_cols_lower(df, col='name'):
+def df_cols_lower(df_in, col='name'):
     """Find in a DataFrame any column matching the col argument in lowercase and rename all found columns to lowercase"""
+    # Make a copy to avoid tampering the original
+    df = df_in.copy()
     # Find and rename any column "Name" or "NAME" to lowercase "name"
     namecols = df.columns[[True if x.lower() == col.lower() else False for x in df.columns]]
     if len(namecols) > 0:
@@ -789,7 +904,9 @@ def date_clean(s):
                     print('Warning: Failed parsing this date: %s' % s)
                     return None
 
-def df_date_clean(df, col):
+def df_date_clean(df_in, col):
     """Apply fuzzy date cleaning (and datetype conversion) to a dataframe's column"""
+    # Make a copy to avoid tampering the original
+    df = df_in.copy()
     df[col] = df[col].apply(date_clean).astype('datetime64')
     return df
