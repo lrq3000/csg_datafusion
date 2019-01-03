@@ -1,4 +1,4 @@
-# CSG Data Fusion by Stephen Larroque, 2016-2019
+# CSG Data Fusion by Stephen Karl Larroque, 2016-2019
 
 This toolset provide several tools to unify databases from multiple sources (data fusion).
 
@@ -47,3 +47,6 @@ For reports extractor notebook:
 * optionally: pdfminer 20140328 or pdfminer.six (via pip install, and associate .py files with python binary, for Windows do the following in a terminal with Admin power: ftype pyfile="C:\Users\Your_Username\Anaconda2\python.exe" "%1"; assoc .py=pyfile )
 
 Other necessary libraries such as pydicom are included with some modifications to fix bugs and issues.
+
+## License
+MIT License (see file LICENSE) for the notebooks and csg_fileutil_libs/aux_funcs.py, the rest in csg_fileutil_libs subfolders have their own licenses, compatible with the MIT.
