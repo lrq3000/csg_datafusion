@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.6.3
+# v2.6.4
 #
 
 from __future__ import absolute_import
@@ -231,6 +231,10 @@ def replace_buggy_accents(s, encoding=None):
         'č': 'e',
         '’': '\'',
     }
+    # Convert the patterns to unicode if the input is a unicode string
+    if isinstance(s, unicode):
+        dic_replace = {k.decode('utf-8'): v.decode('utf-8') for k,v in dic_replace.items()}
+    # Replace each pattern with its correct counterpart
     for pat, rep in dic_replace.items():
         if encoding:
             pat = pat.decode(encoding)
@@ -240,10 +244,12 @@ def replace_buggy_accents(s, encoding=None):
 
 def cleanup_name(s, encoding=None, normalize=True, clean_nonletters=True):
     """Clean a name and remove accentuated characters"""
-    if encoding is None:
-        encoding = chardet.detect(s)['encoding']
-    if encoding:
-        s = s.decode(encoding)
+    if not isinstance(s, unicode):
+        # Decode only if the input string is not already unicode (decoding is from str to unicode, encoding is from unicode to str)
+        if encoding is None:
+            encoding = chardet.detect(s)['encoding']
+        if encoding:
+            s = s.decode(encoding)
     s = _unidecode(s.replace('^', ' '))
     if normalize:
         s = s.lower().strip()
@@ -696,7 +702,28 @@ def dict_to_unicode(d):
             d2[k] = v.encode('utf8')
     return d2
 
-def df_to_unicode(df_in, cols=None, failsafe_encoding='iso-8859-1', skip_errors=False):
+def string_to_unicode(s, failsafe_encoding='iso-8859-1', skip_errors=False):
+    """Ensure unicode encoding for one string.
+    If failing to convert to unicode, will use failsafe_encoding to attempt to decode.
+    If skip_errors=True, the unicode encoding will be forced by skipping undecodable characters (errors='ignore').
+    If failing, try df_to_unicode_fast(), which will strip out special characters and try to replace them with the closest ascii character.
+    """
+    try:
+        # Try default unidecode
+        s = unicode(s)
+    except UnicodeDecodeError as exc:
+        # If fail, we use the failsafe encoding
+        try:
+            s = s.decode(failsafe_encoding)
+        except UnicodeDecodeError as exc2:
+            # At worst, we can just skip errors (and unrecognized characters)
+            if skip_errors:
+                s = unicode(s, errors='ignore')
+            else:
+                raise
+    return s
+
+def df_to_unicode(df_in, cols=None, failsafe_encoding='iso-8859-1', skip_errors=False, progress_bar=False):
     """Ensure unicode encoding for all strings in the specified columns of a dataframe.
     If cols=None, will walk through all columns.
     If failing to convert to unicode, will use failsafe_encoding to attempt to decode.
@@ -717,30 +744,27 @@ def df_to_unicode(df_in, cols=None, failsafe_encoding='iso-8859-1', skip_errors=
         df.columns = [unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
         # By default, take all columns
         cols = df.columns
+    # Calculate total number of items
+    if progress_bar:
+        pbar_total = 0
+        for col in cols:
+            pbar_total += len(df[col].index)
     # Main loop
+    if progress_bar:
+        pbar = _tqdm(total=pbar_total, desc='UNICODE', disable=(not progress_bar))
     for col in cols:
         for idx in df[col].index:
             # Unidecode if value is a string
-            if isinstance(df.loc[idx,col], basestring):
-                try:
-                    # Try default unidecode
-                    df.loc[idx,col] = unicode(df.loc[idx,col])
-                except UnicodeDecodeError as exc:
-                    # If fail, we use the failsafe encoding
-                    try:
-                        df.loc[idx,col] = df.loc[idx,col].decode(failsafe_encoding)
-                    except UnicodeDecodeError as exc2:
-                        # At worst, we can just skip errors (and unrecognized characters)
-                        if skip_errors:
-                            df.loc[idx,col] = unicode(df.loc[idx,col], errors='ignore')
-                        else:
-                            raise
+            if isinstance(df.loc[idx,col], str):  # if item is already unicode, we don't need to do anything
+                df.loc[idx,col] = string_to_unicode(df.loc[idx,col], failsafe_encoding=failsafe_encoding, skip_errors=skip_errors)
+            if progress_bar:
+                pbar.update()
     # Restore index
     if idxbak:
         df.set_index(idxbak, inplace=True)
     return df
 
-def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False):
+def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False, progress_bar=False):
     """Ensure unicode encoding for all strings in the specified columns of a dataframe in a fast way, and optionally by replacing non recognized characters by ascii equivalents. Also ensures that columns names are correctly decodable as unicode if cols=None.
     If cols=None, will walk through all columns.
     If replace_ascii, will replace special characters with the closest ASCII counterpart (using unidecode) if the conversion to unicode fails
@@ -764,7 +788,7 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False)
         serrors = 'ignore'
     else:
         serrors = 'strict'
-    for col in cols:
+    for col in _tqdm(cols, desc='UNICODE', disable=(not progress_bar)):
         # Verify that the column is of type object, else for sure it is not a string
         if df.loc[:, col].dtype.name != 'object':
             continue
@@ -772,7 +796,11 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False)
             # First try a decoding by detecting the correct encoding
             #encoding = chardet.detect(''.join(df.loc[:, col]))['encoding']
             allvals = (x if isinstance(x, basestring) else str(x) for _, x in df.loc[:, col].items())
-            encoding = chardet.detect(''.join(allvals))['encoding']
+            allvalsjoined = ''.join(allvals)
+            if isinstance(allvalsjoined, unicode):  # if unicode, skip decoding
+                encoding = None
+            else:
+                encoding = chardet.detect(allvalsjoined)['encoding']
             if encoding:
                 df.loc[:, col] = df.loc[:, col].apply(lambda x: x.decode(encoding, errors=serrors) if isinstance(x, str) else x)
             df.loc[:, col] = df.loc[:, col].astype('unicode')
@@ -797,7 +825,9 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False)
         df.set_index(idxbak, inplace=True)
     return df
 
-def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False):
+def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False, decode_if_errors=False, progress_bar=False):
+    """Encode all unicode strings in a dataframe into a string of the chosen encoding.
+    When decode_if_errors is True, if a string (str) is found, an attempt will be made to decode it using an autodetection of the encoding, to make a unicode sandwich."""
     # Make a copy to avoid tampering the original
     df = df_in.copy()
     # If there is a complex index, it might contain strings, so we reset it as columns so that we can unidecode indices too, and we will restore the indices at the end
@@ -809,20 +839,35 @@ def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False):
     # Which columns do we have to unidecode?
     if cols is None:  # by default, all!
         cols = df.columns
+    # Calculate total number of items
+    if progress_bar:
+        pbar_total = 0
+        for col in cols:
+            pbar_total += len(df[col].index)
     # Main loop
+    if progress_bar:
+        pbar = _tqdm(total=pbar_total, desc='UNICODE', disable=(not progress_bar))
     for col in cols:
         for idx in df[col].index:
             # Unidecode if value is a string
             if isinstance(df.loc[idx,col], (basestring, unicode)):
                 try:
-                    # Try default unidecode
-                    df.loc[idx,col] = df.loc[idx,col].encode('utf-8')
-                except UnicodeDecodeError as exc:
-                    # At worst, we can just skip errors (and unrecognized characters)
-                    if skip_errors:
-                        df.loc[idx,col] = _unidecode(df.loc[idx,col])
+                    # Try to encode to utf-8, but only if it is unicode
+                    if isinstance(df.loc[idx,col], unicode):
+                        df.loc[idx,col] = df.loc[idx,col].encode(encoding)
+                    elif decode_if_errors:
+                        df.loc[idx,col] = string_to_unicode(df.loc[idx,col]).encode(encoding)
                     else:
+                        raise ValueError('Error at column "%s" index %s: not unicode!')
+                except UnicodeDecodeError as exc:
+                    # At worst, try unidecode
+                    if skip_errors:
+                        df.loc[idx,col] = _unidecode(df.loc[idx,col]).encode(encoding)
+                    else:
+                        print('Error at column "%s" index %s' % (col, str(idx)))
                         raise
+            if progress_bar:
+                pbar.update()
     # Restore index
     if idxbak:
         df.set_index(idxbak, inplace=True)
