@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.6.4
+# v2.6.5
 #
 
 from __future__ import absolute_import
@@ -50,6 +50,10 @@ try:
     from StringIO import StringIO as _StringIO
 except ImportError as exc:
     from io import StringIO as _StringIO
+
+def _str(s):
+    """Convert to str only if the object is not unicode"""
+    return str(s) if not isinstance(s, unicode) else s
 
 def save_dict_as_csv(d, output_file, fields_order=None, csv_order_by=None, verbose=False):
     """Save a dict/list of dictionaries in a csv, with each key being a column"""
@@ -267,6 +271,9 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
     diag_order = [x.lower().strip() for x in diag_order]
     # Check if our list of diagnosis covers all possible in the database, else raise an error
     possible_diags = serie.str.lower().str.strip().dropna().unique()
+    # If unicode, we convert the diag_order to unicode
+    if isinstance(possible_diags[0].lower().strip(), unicode):
+        diag_order = list_to_unicode(diag_order)
     try:
         assert not set([x.lower().strip() for x in possible_diags]) - set([x.lower().strip() for x in diag_order])
     except Exception as exc:
@@ -693,7 +700,9 @@ def df_concatenate_all_but(df, col, setindex=False):
 
 def dict_to_unicode(d):
     """Convert a dict of dict to unicode in order to be able to save via csv.DictWriter()
-    See also: https://stackoverflow.com/questions/5838605/python-dictwriter-writing-utf-8-encoded-csv-files"""
+    See also: https://stackoverflow.com/questions/5838605/python-dictwriter-writing-utf-8-encoded-csv-files
+    TODO: fix naming, it's not decoding to unicode, it's encoding to utf-8 (thus it's converting to a str)
+    """
     d2 = copy.deepcopy(d)
     for k, v in d2.items():
         if isinstance(v, dict):
@@ -701,6 +710,10 @@ def dict_to_unicode(d):
         else:
             d2[k] = v.encode('utf8')
     return d2
+
+def list_to_unicode(l):
+    """Convert the items of a list of str string into unicode"""
+    return [unicode(x.decode(encoding=chardet.detect(x)['encoding'])) if not isinstance(x, unicode) else x for x in l]
 
 def string_to_unicode(s, failsafe_encoding='iso-8859-1', skip_errors=False):
     """Ensure unicode encoding for one string.
@@ -730,6 +743,8 @@ def df_to_unicode(df_in, cols=None, failsafe_encoding='iso-8859-1', skip_errors=
     If skip_errors=True, the unicode encoding will be forced by skipping undecodable characters (errors='ignore').
     If failing, try df_to_unicode_fast(), which will strip out special characters and try to replace them with the closest ascii character.
     """
+    if len(df_in) == 0:  # if empty, this will produce an error (when trying to reset the index)
+        return df_in
     # Make a copy to avoid tampering the original
     df = df_in.copy()
     # If there is a complex index, it might contain strings, so we reset it as columns so that we can unidecode indices too, and we will restore the indices at the end
@@ -755,7 +770,7 @@ def df_to_unicode(df_in, cols=None, failsafe_encoding='iso-8859-1', skip_errors=
     for col in cols:
         for idx in df[col].index:
             # Unidecode if value is a string
-            if isinstance(df.loc[idx,col], str):  # if item is already unicode, we don't need to do anything
+            if isinstance(df.loc[idx,col], str):  # if item is already unicode, we don't need to do anything (also if item is null or another type, we do not need to decode)
                 df.loc[idx,col] = string_to_unicode(df.loc[idx,col], failsafe_encoding=failsafe_encoding, skip_errors=skip_errors)
             if progress_bar:
                 pbar.update()
@@ -781,9 +796,10 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False,
         idxbak = None
     # Which columns do we have to unidecode?
     if cols is None:  # by default, all!
-        cols = df.columns
         # Ensure column names are unicode
         df.columns = [unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
+        # Use the new column names
+        cols = df.columns
     if skip_errors:
         serrors = 'ignore'
     else:
@@ -803,14 +819,14 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False,
                 encoding = chardet.detect(allvalsjoined)['encoding']
             if encoding:
                 df.loc[:, col] = df.loc[:, col].apply(lambda x: x.decode(encoding, errors=serrors) if isinstance(x, str) else x)
-            df.loc[:, col] = df.loc[:, col].astype('unicode')
+            #df.loc[:, col] = df.loc[:, col].astype('unicode')  # DEPRECATED: works but if we do this, all null values (nan, nat, etc) will be converted to strings and become very difficult to process (eg, not detectable using pd.isnull())!
             #df[col] = df[col].map(lambda x: x.encode('unicode-escape').decode('utf-8'))
         except Exception as exc:
             try:
                 # If decoding failed, we can try to replace the special characters with their closest ASCII counterpart (via unidecode)
                 if replace_ascii:
                     df.loc[:, col] = df.loc[:, col].apply(lambda x: unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors=serrors) if isinstance(x, str) else x)
-                    df.loc[:, col] = df.loc[:, col].astype('unicode')
+                    #df.loc[:, col] = df.loc[:, col].astype('unicode')  # DEPRECATED: works but if we do this, all null values (nan, nat, etc) will be converted to strings and become very difficult to process (eg, not detectable using pd.isnull())!
                 else:
                     raise
             except Exception as exc:
@@ -838,6 +854,9 @@ def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False, decode_if_e
         idxbak = None
     # Which columns do we have to unidecode?
     if cols is None:  # by default, all!
+        # Ensure column names are encoded
+        df.columns = [x.encode(encoding) for x in df.columns]
+        # Use all columns, and the new column names encoded
         cols = df.columns
     # Calculate total number of items
     if progress_bar:
