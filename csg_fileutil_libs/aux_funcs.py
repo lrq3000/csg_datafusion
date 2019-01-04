@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.7.0
+# v2.7.1
 #
 
 from __future__ import absolute_import
@@ -491,10 +491,14 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
             # If we do multiple merge, we will have multiple name_alt columns: name_alt0, name_alt1, etc
             alt_id = col+'_alt%i_orig' % (x+1)
             alt_id2 = col+'_alt%i_orig2' % (x+1)
+            alt_id3 = col+'_alt%i_cleanup' % (x+1)
             if not alt_id in dfinal.columns and not alt_id2 in dfinal.columns:
                 # Rename the name column from the 2nd database
                 dfinal.insert(1, alt_id, dfinal[col+'_orig']) # insert the column just after 'name' for ergonomy
                 dfinal.insert(2, alt_id2, dfinal[col+'_orig2'])
+                # Also add the cleaned up name as a new column, can ease search by user (no accentuated characters)
+                dfinal.insert(3, alt_id3, dfinal[col])
+                dfinal = cleanup_name_df(dfinal, col=alt_id3)
 
                 # Finally delete the useless column (that we copied over to name_altx)
                 del dfinal[col+'_orig']
