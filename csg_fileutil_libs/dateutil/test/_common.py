@@ -1,11 +1,5 @@
 from __future__ import unicode_literals
-try:
-    import unittest2 as unittest
-except ImportError:
-    import unittest
-
 import os
-import datetime
 import time
 import subprocess
 import warnings
@@ -81,7 +75,7 @@ class PicklableMixin(object):
 
         return nobj
 
-    def assertPicklable(self, obj, asfile=False,
+    def assertPicklable(self, obj, singleton=False, asfile=False,
                         dump_kwargs=None, load_kwargs=None):
         """
         Assert that an object can be pickled and unpickled. This assertion
@@ -93,7 +87,8 @@ class PicklableMixin(object):
         load_kwargs = load_kwargs or {}
 
         nobj = get_nobj(obj, dump_kwargs, load_kwargs)
-        self.assertIsNot(obj, nobj)
+        if not singleton:
+            self.assertIsNot(obj, nobj)
         self.assertEqual(obj, nobj)
 
 
@@ -192,7 +187,7 @@ class TZWinContext(TZContextBase):
         p = subprocess.Popen(['tzutil', '/g'], stdout=subprocess.PIPE)
 
         ctzname, err = p.communicate()
-        ctzname = ctzname.decode()     # Popen returns 
+        ctzname = ctzname.decode()     # Popen returns
 
         if p.returncode:
             raise OSError('Failed to get current time zone: ' + err)
@@ -207,17 +202,6 @@ class TZWinContext(TZContextBase):
         if p.returncode:
             raise OSError('Failed to set current time zone: ' +
                           (err or 'Unknown error.'))
-
-
-###
-# Compatibility functions
-
-def _total_seconds(td):
-    # Python 2.6 doesn't have a total_seconds() method on timedelta objects
-    return ((td.seconds + td.days * 86400) * 1000000 +
-            td.microseconds) // 1000000
-
-total_seconds = getattr(datetime.timedelta, 'total_seconds', _total_seconds)
 
 
 ###
@@ -244,6 +228,7 @@ class NotAValueClass(object):
     __eq__ = __req__ = _op
     __le__ = __rle__ = _op
     __ge__ = __rge__ = _op
+
 
 NotAValue = NotAValueClass()
 
@@ -278,11 +263,13 @@ class ComparesEqualClass(object):
     __rlt__ = __lt__
     __rgt__ = __gt__
 
+
 ComparesEqual = ComparesEqualClass()
+
 
 class UnsetTzClass(object):
     """ Sentinel class for unset time zone variable """
     pass
 
-UnsetTz = UnsetTzClass()
 
+UnsetTz = UnsetTzClass()

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
-from ._common import unittest, PicklableMixin
-from ._common import total_seconds
+from ._common import PicklableMixin
 from ._common import TZEnvContext, TZWinContext
 from ._common import WarningTestMixin
 from ._common import ComparesEqual
@@ -10,20 +9,20 @@ from datetime import datetime, timedelta
 from datetime import time as dt_time
 from datetime import tzinfo
 from six import BytesIO, StringIO
+import unittest
 
-import os
-import subprocess
 import sys
 import base64
 import copy
-import itertools
 
 from functools import partial
 
 IS_WIN = sys.platform.startswith('win')
 
+import pytest
+
 # dateutil imports
-from dateutil.relativedelta import relativedelta, SU
+from dateutil.relativedelta import relativedelta, SU, TH
 from dateutil.parser import parse
 from dateutil import tz as tz
 from dateutil import zoneinfo
@@ -152,6 +151,17 @@ END:DAYLIGHT
 END:VTIMEZONE
 """
 
+EST_TUPLE = ('EST', timedelta(hours=-5), timedelta(hours=0))
+EDT_TUPLE = ('EDT', timedelta(hours=-4), timedelta(hours=1))
+
+
+###
+# Helper functions
+def get_timezone_tuple(dt):
+    """Retrieve a (tzname, utcoffset, dst) tuple for a given DST"""
+    return dt.tzname(), dt.utcoffset(), dt.dst()
+
+
 ###
 # Mix-ins
 class context_passthrough(object):
@@ -181,15 +191,13 @@ class TzFoldMixin(object):
         tzname = self._get_tzname('Australia/Sydney')
 
         with self._gettz_context(tzname):
-            SYD0 = self.gettz(tzname)
-            SYD1 = self.gettz(tzname)
+            SYD = self.gettz(tzname)
 
             t0_u = datetime(2012, 3, 31, 15, 30, tzinfo=tz.tzutc())  # AEST
             t1_u = datetime(2012, 3, 31, 16, 30, tzinfo=tz.tzutc())  # AEDT
 
-            # Using fresh tzfiles
-            t0_syd0 = t0_u.astimezone(SYD0)
-            t1_syd1 = t1_u.astimezone(SYD1)
+            t0_syd0 = t0_u.astimezone(SYD)
+            t1_syd1 = t1_u.astimezone(SYD)
 
             self.assertEqual(t0_syd0.replace(tzinfo=None),
                              datetime(2012, 4, 1, 2, 30))
@@ -200,21 +208,18 @@ class TzFoldMixin(object):
             self.assertEqual(t0_syd0.utcoffset(), timedelta(hours=11))
             self.assertEqual(t1_syd1.utcoffset(), timedelta(hours=10))
 
-
     def testGapPositiveUTCOffset(self):
         # Test that we don't have a problem around gaps.
         tzname = self._get_tzname('Australia/Sydney')
 
         with self._gettz_context(tzname):
-            SYD0 = self.gettz(tzname)
-            SYD1 = self.gettz(tzname)
+            SYD = self.gettz(tzname)
 
             t0_u = datetime(2012, 10, 6, 15, 30, tzinfo=tz.tzutc())  # AEST
             t1_u = datetime(2012, 10, 6, 16, 30, tzinfo=tz.tzutc())  # AEDT
 
-            # Using fresh tzfiles
-            t0 = t0_u.astimezone(SYD0)
-            t1 = t1_u.astimezone(SYD1)
+            t0 = t0_u.astimezone(SYD)
+            t1 = t1_u.astimezone(SYD)
 
             self.assertEqual(t0.replace(tzinfo=None),
                              datetime(2012, 10, 7, 1, 30))
@@ -230,41 +235,36 @@ class TzFoldMixin(object):
             tzname = self._get_tzname('America/Toronto')
 
             with self._gettz_context(tzname):
-                # Calling fromutc() alters the tzfile object
-                TOR0 = self.gettz(tzname)
-                TOR1 = self.gettz(tzname)
+                TOR = self.gettz(tzname)
 
                 t0_u = datetime(2011, 11, 6, 5, 30, tzinfo=tz.tzutc())
                 t1_u = datetime(2011, 11, 6, 6, 30, tzinfo=tz.tzutc())
 
-                # Using fresh tzfiles
-                t0_tor0 = t0_u.astimezone(TOR0)
-                t1_tor1 = t1_u.astimezone(TOR1)
+                t0_tor = t0_u.astimezone(TOR)
+                t1_tor = t1_u.astimezone(TOR)
 
-                self.assertEqual(t0_tor0.replace(tzinfo=None),
+                self.assertEqual(t0_tor.replace(tzinfo=None),
                                  datetime(2011, 11, 6, 1, 30))
 
-                self.assertEqual(t1_tor1.replace(tzinfo=None),
+                self.assertEqual(t1_tor.replace(tzinfo=None),
                                  datetime(2011, 11, 6, 1, 30))
 
-                self.assertEqual(t0_tor0.utcoffset(), timedelta(hours=-4.0))
-                self.assertEqual(t1_tor1.utcoffset(), timedelta(hours=-5.0))
+                self.assertNotEqual(t0_tor.tzname(), t1_tor.tzname())
+                self.assertEqual(t0_tor.utcoffset(), timedelta(hours=-4.0))
+                self.assertEqual(t1_tor.utcoffset(), timedelta(hours=-5.0))
 
     def testGapNegativeUTCOffset(self):
         # Test that we don't have a problem around gaps.
         tzname = self._get_tzname('America/Toronto')
 
         with self._gettz_context(tzname):
-            # Calling fromutc() alters the tzfile object
-            TOR0 = self.gettz(tzname)
-            TOR1 = self.gettz(tzname)
+            TOR = self.gettz(tzname)
 
             t0_u = datetime(2011, 3, 13, 6, 30, tzinfo=tz.tzutc())
             t1_u = datetime(2011, 3, 13, 7, 30, tzinfo=tz.tzutc())
 
-            # Using fresh tzfiles
-            t0 = t0_u.astimezone(TOR0)
-            t1 = t1_u.astimezone(TOR1)
+            t0 = t0_u.astimezone(TOR)
+            t1 = t1_u.astimezone(TOR)
 
             self.assertEqual(t0.replace(tzinfo=None),
                              datetime(2011, 3, 13, 1, 30))
@@ -276,6 +276,28 @@ class TzFoldMixin(object):
             self.assertEqual(t0.utcoffset(), timedelta(hours=-5.0))
             self.assertEqual(t1.utcoffset(), timedelta(hours=-4.0))
 
+    def testFoldLondon(self):
+        tzname = self._get_tzname('Europe/London')
+
+        with self._gettz_context(tzname):
+            LON = self.gettz(tzname)
+            UTC = tz.tzutc()
+
+            t0_u = datetime(2013, 10, 27, 0, 30, tzinfo=UTC)   # BST
+            t1_u = datetime(2013, 10, 27, 1, 30, tzinfo=UTC)   # GMT
+
+            t0 = t0_u.astimezone(LON)
+            t1 = t1_u.astimezone(LON)
+
+            self.assertEqual(t0.replace(tzinfo=None),
+                             datetime(2013, 10, 27, 1, 30))
+
+            self.assertEqual(t1.replace(tzinfo=None),
+                             datetime(2013, 10, 27, 1, 30))
+
+            self.assertEqual(t0.utcoffset(), timedelta(hours=1))
+            self.assertEqual(t1.utcoffset(), timedelta(hours=0))
+
     def testFoldIndependence(self):
         tzname = self._get_tzname('America/New_York')
 
@@ -286,11 +308,6 @@ class TzFoldMixin(object):
 
             # Firmly 2015-11-01 0:30 EDT-4
             pre_dst = datetime(2015, 11, 1, 0, 30, tzinfo=NYC)
-
-            # Currently, there's no way around the fact that this resolves to an
-            # ambiguous date, which defaults to EST. I'm not hard-coding in the
-            # answer, though, because the preferred behavior would be that this
-            # results in a time on the EDT side.
 
             # Ambiguous between 2015-11-01 1:30 EDT-4 and 2015-11-01 1:30 EST-5
             in_dst = pre_dst + hour
@@ -308,6 +325,25 @@ class TzFoldMixin(object):
 
             # Now check to make sure in_dst's tzname hasn't changed
             self.assertEqual(in_dst_tzname_0, in_dst.tzname())
+
+    def testInZoneFoldEquality(self):
+        # Two datetimes in the same zone are considered to be equal if their
+        # wall times are equal, even if they have different absolute times.
+
+        tzname = self._get_tzname('America/New_York')
+
+        with self._gettz_context(tzname):
+            NYC = self.gettz(tzname)
+            UTC = tz.tzutc()
+
+            dt0 = datetime(2011, 11, 6, 1, 30, tzinfo=NYC)
+            dt1 = tz.enfold(dt0, fold=1)
+
+            # Make sure these actually represent different times
+            self.assertNotEqual(dt0.astimezone(UTC), dt1.astimezone(UTC))
+
+            # Test that they compare equal
+            self.assertEqual(dt0, dt1)
 
     def _test_ambiguous_time(self, dt, tzid, ambiguous):
         # This is a test to check that the individual is_ambiguous values
@@ -385,7 +421,6 @@ class TzFoldMixin(object):
             SYD1 = self.gettz(tzname)
 
             t0_u = datetime(2012, 3, 31, 14, 30, tzinfo=tz.tzutc())  # AEST
-            t1_u = datetime(2012, 3, 31, 16, 30, tzinfo=tz.tzutc())  # AEDT
 
             t0_syd0 = t0_u.astimezone(SYD0)
             t0_syd1 = t0_u.astimezone(SYD1)
@@ -435,33 +470,22 @@ class TzWinFoldMixin(object):
         with self.context(tzname):
             # Calling fromutc() alters the tzfile object
             SYD = self.tzclass(*args)
-            SYD0 = self.tzclass(*args)
-            SYD1 = self.tzclass(*args)
-
-            self.assertIsNot(SYD0, SYD1)
 
             # Get the transition time in UTC from the object, because
             # Windows doesn't store historical info
-            t_n, t0_u, t1_u = self.get_utc_transitions(SYD0, 2012, False)
+            t_n, t0_u, t1_u = self.get_utc_transitions(SYD, 2012, False)
 
             # Using fresh tzfiles
-            t0_syd0 = t0_u.astimezone(SYD0)
-            t1_syd1 = t1_u.astimezone(SYD1)
+            t0_syd = t0_u.astimezone(SYD)
+            t1_syd = t1_u.astimezone(SYD)
 
-            self.assertEqual(t0_syd0.replace(tzinfo=None), t_n)
+            self.assertEqual(t0_syd.replace(tzinfo=None), t_n)
 
-            self.assertEqual(t1_syd1.replace(tzinfo=None), t_n)
+            self.assertEqual(t1_syd.replace(tzinfo=None), t_n)
 
-            self.assertNotEqual(t0_syd0, t1_syd1)
-            self.assertEqual(t0_syd0.utcoffset(), timedelta(hours=11))
-            self.assertEqual(t1_syd1.utcoffset(), timedelta(hours=10))
-
-            # Re-using them across (make sure there's no cache problem)
-            t0_syd1 = t0_u.astimezone(SYD1)
-            t1_syd0 = t1_u.astimezone(SYD0)
-
-            self.assertEqual(t0_syd0, t0_syd1)
-            self.assertEqual(t1_syd1, t1_syd0)
+            self.assertEqual(t0_syd.utcoffset(), timedelta(hours=11))
+            self.assertEqual(t1_syd.utcoffset(), timedelta(hours=10))
+            self.assertNotEqual(t0_syd.tzname(), t1_syd.tzname())
 
     def testGapPositiveUTCOffset(self):
         # Test that we don't have a problem around gaps.
@@ -469,18 +493,12 @@ class TzWinFoldMixin(object):
         args = self.get_args(tzname)
 
         with self.context(tzname):
-            # Calling fromutc() alters the tzfile object
             SYD = self.tzclass(*args)
-            SYD0 = self.tzclass(*args)
-            SYD1 = self.tzclass(*args)
-
-            self.assertIsNot(SYD0, SYD1)
 
             t_n, t0_u, t1_u = self.get_utc_transitions(SYD, 2012, True)
 
-            # Using fresh tzfiles
-            t0 = t0_u.astimezone(SYD0)
-            t1 = t1_u.astimezone(SYD1)
+            t0 = t0_u.astimezone(SYD)
+            t1 = t1_u.astimezone(SYD)
 
             self.assertEqual(t0.replace(tzinfo=None), t_n)
 
@@ -494,48 +512,33 @@ class TzWinFoldMixin(object):
         tzname = 'Eastern Standard Time'
         args = self.get_args(tzname)
 
-        # Calling fromutc() alters the tzfile object
         with self.context(tzname):
             TOR = self.tzclass(*args)
-            TOR0 = self.tzclass(*args)
-            TOR1 = self.tzclass(*args)
 
             t_n, t0_u, t1_u = self.get_utc_transitions(TOR, 2011, False)
 
-            # Using fresh tzfiles
-            t0_tor0 = t0_u.astimezone(TOR0)
-            t1_tor1 = t1_u.astimezone(TOR1)
+            t0_tor = t0_u.astimezone(TOR)
+            t1_tor = t1_u.astimezone(TOR)
 
-            self.assertEqual(t0_tor0.replace(tzinfo=None), t_n)
-            self.assertEqual(t1_tor1.replace(tzinfo=None), t_n)
+            self.assertEqual(t0_tor.replace(tzinfo=None), t_n)
+            self.assertEqual(t1_tor.replace(tzinfo=None), t_n)
 
-            self.assertNotEqual(t0_tor0.tzname(), t1_tor1.tzname())
-            self.assertEqual(t0_tor0.utcoffset(), timedelta(hours=-4.0))
-            self.assertEqual(t1_tor1.utcoffset(), timedelta(hours=-5.0))
-
-            # Re-using them across (make sure there's no cache problem)
-            t0_tor1 = t0_u.astimezone(TOR1)
-            t1_tor0 = t1_u.astimezone(TOR0)
-
-            self.assertEqual(t0_tor0, t0_tor1)
-            self.assertEqual(t1_tor1, t1_tor0)
+            self.assertNotEqual(t0_tor.tzname(), t1_tor.tzname())
+            self.assertEqual(t0_tor.utcoffset(), timedelta(hours=-4.0))
+            self.assertEqual(t1_tor.utcoffset(), timedelta(hours=-5.0))
 
     def testGapNegativeUTCOffset(self):
         # Test that we don't have a problem around gaps.
         tzname = 'Eastern Standard Time'
         args = self.get_args(tzname)
 
-        # Calling fromutc() alters the tzfile object
         with self.context(tzname):
             TOR = self.tzclass(*args)
-            TOR0 = self.tzclass(*args)
-            TOR1 = self.tzclass(*args)
 
             t_n, t0_u, t1_u = self.get_utc_transitions(TOR, 2011, True)
 
-            # Using fresh tzfiles
-            t0 = t0_u.astimezone(TOR0)
-            t1 = t1_u.astimezone(TOR1)
+            t0 = t0_u.astimezone(TOR)
+            t1 = t1_u.astimezone(TOR)
 
             self.assertEqual(t0.replace(tzinfo=None),
                              t_n)
@@ -543,7 +546,7 @@ class TzWinFoldMixin(object):
             self.assertEqual(t1.replace(tzinfo=None),
                              t_n + timedelta(hours=2))
 
-            self.assertNotEqual(t0, t1)
+            self.assertNotEqual(t0.tzname(), t1.tzname())
             self.assertEqual(t0.utcoffset(), timedelta(hours=-5.0))
             self.assertEqual(t1.utcoffset(), timedelta(hours=-4.0))
 
@@ -580,10 +583,36 @@ class TzWinFoldMixin(object):
             # Now check to make sure in_dst's tzname hasn't changed
             self.assertEqual(in_dst_tzname_0, in_dst.tzname())
 
+    def testInZoneFoldEquality(self):
+        # Two datetimes in the same zone are considered to be equal if their
+        # wall times are equal, even if they have different absolute times.
+        tzname = 'Eastern Standard Time'
+        args = self.get_args(tzname)
+
+        with self.context(tzname):
+            NYC = self.tzclass(*args)
+            UTC = tz.tzutc()
+
+            t_n, t0_u, t1_u = self.get_utc_transitions(NYC, 2011, False)
+
+            dt0 = t_n.replace(tzinfo=NYC)
+            dt1 = tz.enfold(dt0, fold=1)
+
+            # Make sure these actually represent different times
+            self.assertNotEqual(dt0.astimezone(UTC), dt1.astimezone(UTC))
+
+            # Test that they compare equal
+            self.assertEqual(dt0, dt1)
 
 ###
 # Test Cases
 class TzUTCTest(unittest.TestCase):
+    def testSingleton(self):
+        UTC_0 = tz.tzutc()
+        UTC_1 = tz.tzutc()
+
+        self.assertIs(UTC_0, UTC_1)
+
     def testOffset(self):
         ct = datetime(2009, 4, 1, 12, 11, 13, tzinfo=tz.tzutc())
 
@@ -602,7 +631,6 @@ class TzUTCTest(unittest.TestCase):
         UTC0 = tz.tzutc()
         UTC1 = tz.tzutc()
 
-        self.assertIsNot(UTC0, UTC1)
         self.assertEqual(UTC0, UTC1)
 
     def testInequality(self):
@@ -636,6 +664,7 @@ class TzUTCTest(unittest.TestCase):
         self.assertFalse(tz.datetime_ambiguous(dt))
 
 
+@pytest.mark.tzoffset
 class TzOffsetTest(unittest.TestCase):
     def testTimedeltaOffset(self):
         est = tz.tzoffset('EST', timedelta(hours=-5))
@@ -658,7 +687,6 @@ class TzOffsetTest(unittest.TestCase):
         tname = 'EST'
         tzo = tz.tzoffset(tname, -5 * 3600)
         self.assertEqual(repr(tzo), "tzoffset(" + repr(tname) + ", -18000)")
-
 
     def testEquality(self):
         utc = tz.tzoffset('UTC', 0)
@@ -691,7 +719,32 @@ class TzOffsetTest(unittest.TestCase):
 
         self.assertFalse(tz.datetime_ambiguous(dt))
 
+    def testTzOffsetInstance(self):
+        tz1 = tz.tzoffset.instance('EST', timedelta(hours=-5))
+        tz2 = tz.tzoffset.instance('EST', timedelta(hours=-5))
 
+        assert tz1 is not tz2
+
+    def testTzOffsetSingletonDifferent(self):
+        tz1 = tz.tzoffset('EST', timedelta(hours=-5))
+        tz2 = tz.tzoffset('EST', -18000)
+
+        assert tz1 is tz2
+
+@pytest.mark.tzoffset
+@pytest.mark.parametrize('args', [
+    ('UTC', 0),
+    ('EST', -18000),
+    ('EST', timedelta(hours=-5)),
+    (None, timedelta(hours=3)),
+])
+def test_tzoffset_singleton(args):
+    tz1 = tz.tzoffset(*args)
+    tz2 = tz.tzoffset(*args)
+
+    assert tz1 is tz2
+
+@pytest.mark.tzlocal
 class TzLocalTest(unittest.TestCase):
     def testEquality(self):
         tz1 = tz.tzlocal()
@@ -703,8 +756,8 @@ class TzLocalTest(unittest.TestCase):
 
     def testInequalityFixedOffset(self):
         tzl = tz.tzlocal()
-        tzos = tz.tzoffset('LST', total_seconds(tzl._std_offset))
-        tzod = tz.tzoffset('LDT', total_seconds(tzl._std_offset))
+        tzos = tz.tzoffset('LST', tzl._std_offset.total_seconds())
+        tzod = tz.tzoffset('LDT', tzl._std_offset.total_seconds())
 
         self.assertFalse(tzl == tzos)
         self.assertFalse(tzl == tzod)
@@ -713,12 +766,15 @@ class TzLocalTest(unittest.TestCase):
 
     def testInequalityInvalid(self):
         tzl = tz.tzlocal()
-        UTC = tz.tzutc()
 
         self.assertTrue(tzl != 1)
-        self.assertTrue(tzl != tz.tzutc())
         self.assertFalse(tzl == 1)
-        self.assertFalse(tzl == UTC)
+
+        # TODO: Use some sort of universal local mocking so that it's clear
+        # that we're expecting tzlocal to *not* be Pacific/Kiritimati
+        LINT = tz.gettz('Pacific/Kiritimati')
+        self.assertTrue(tzl != LINT)
+        self.assertFalse(tzl == LINT)
 
     def testInequalityUnsupported(self):
         tzl = tz.tzlocal()
@@ -732,9 +788,26 @@ class TzLocalTest(unittest.TestCase):
         self.assertEqual(repr(tzl), 'tzlocal()')
 
 
+@pytest.mark.parametrize('args,kwargs', [
+    (('EST', -18000), {}),
+    (('EST', timedelta(hours=-5)), {}),
+    (('EST',), {'offset': -18000}),
+    (('EST',), {'offset': timedelta(hours=-5)}),
+    (tuple(), {'name': 'EST', 'offset': -18000})
+])
+def test_tzoffset_is(args, kwargs):
+    tz_ref = tz.tzoffset('EST', -18000)
+    assert tz.tzoffset(*args, **kwargs) is tz_ref
+
+
+def test_tzoffset_is_not():
+    assert tz.tzoffset('EDT', -14400) is not tz.tzoffset('EST', -18000)
+
+
+@pytest.mark.tzlocal
 @unittest.skipIf(IS_WIN, "requires Unix")
 @unittest.skipUnless(TZEnvContext.tz_change_allowed(),
-                         TZEnvContext.tz_change_disallowed_message())
+                     TZEnvContext.tz_change_disallowed_message())
 class TzLocalNixTest(unittest.TestCase, TzFoldMixin):
     # This is a set of tests for `tzlocal()` on *nix systems
 
@@ -744,6 +817,9 @@ class TzLocalNixTest(unittest.TestCase, TzFoldMixin):
 
     # POSIX string for AEST/AEDT (valid >= 2008)
     TZ_AEST = 'AEST-10AEDT,M10.1.0/2,M4.1.0/3'
+
+    # POSIX string for BST/GMT
+    TZ_LON = 'GMT0BST,M3.5.0,M10.5.0'
 
     # POSIX string for UTC
     UTC = 'UTC'
@@ -755,7 +831,8 @@ class TzLocalNixTest(unittest.TestCase, TzFoldMixin):
     def _gettz_context(self, tzname):
         tzname_map = {'Australia/Sydney': self.TZ_AEST,
                       'America/Toronto': self.TZ_EST,
-                      'America/New_York': self.TZ_EST}
+                      'America/New_York': self.TZ_EST,
+                      'Europe/London': self.TZ_LON}
 
         return TZEnvContext(tzname_map.get(tzname, tzname))
 
@@ -830,7 +907,78 @@ class TzLocalNixTest(unittest.TestCase, TzFoldMixin):
             self.assertIs(dt_time(13, 20, tzinfo=tz.tzlocal()).dst(),
                           None)
 
+    def testUTCEquality(self):
+        with TZEnvContext(self.UTC):
+            assert tz.tzlocal() == tz.tzutc()
 
+
+# TODO: Maybe a better hack than this?
+def mark_tzlocal_nix(f):
+    marks = [
+        pytest.mark.tzlocal,
+        pytest.mark.skipif(IS_WIN, reason='requires Unix'),
+        pytest.mark.skipif(not TZEnvContext.tz_change_allowed,
+                           reason=TZEnvContext.tz_change_disallowed_message())
+    ]
+
+    for mark in reversed(marks):
+        f = mark(f)
+
+    return f
+
+
+@mark_tzlocal_nix
+@pytest.mark.parametrize('tzvar', ['UTC', 'GMT0', 'UTC0'])
+def test_tzlocal_utc_equal(tzvar):
+    with TZEnvContext(tzvar):
+        assert tz.tzlocal() == tz.UTC
+
+
+@mark_tzlocal_nix
+@pytest.mark.parametrize('tzvar', [
+    'Europe/London', 'America/New_York',
+    'GMT0BST', 'EST5EDT'])
+def test_tzlocal_utc_unequal(tzvar):
+    with TZEnvContext(tzvar):
+        assert tz.tzlocal() != tz.UTC
+
+
+@mark_tzlocal_nix
+def test_tzlocal_local_time_trim_colon():
+    with TZEnvContext(':/etc/localtime'):
+        assert tz.gettz() is not None
+
+
+@mark_tzlocal_nix
+@pytest.mark.parametrize('tzvar, tzoff', [
+    ('EST5', tz.tzoffset('EST', -18000)),
+    ('GMT', tz.tzoffset('GMT', 0)),
+    ('YAKT-9', tz.tzoffset('YAKT', timedelta(hours=9))),
+    ('JST-9', tz.tzoffset('JST', timedelta(hours=9))),
+])
+def test_tzlocal_offset_equal(tzvar, tzoff):
+    with TZEnvContext(tzvar):
+        # Including both to test both __eq__ and __ne__
+        assert tz.tzlocal() == tzoff
+        assert not (tz.tzlocal() != tzoff)
+
+
+@mark_tzlocal_nix
+@pytest.mark.parametrize('tzvar, tzoff', [
+    ('EST5EDT', tz.tzoffset('EST', -18000)),
+    ('GMT0BST', tz.tzoffset('GMT', 0)),
+    ('EST5', tz.tzoffset('EST', -14400)),
+    ('YAKT-9', tz.tzoffset('JST', timedelta(hours=9))),
+    ('JST-9', tz.tzoffset('YAKT', timedelta(hours=9))),
+])
+def test_tzlocal_offset_unequal(tzvar, tzoff):
+    with TZEnvContext(tzvar):
+        # Including both to test both __eq__ and __ne__
+        assert tz.tzlocal() != tzoff
+        assert not (tz.tzlocal() == tzoff)
+
+
+@pytest.mark.gettz
 class GettzTest(unittest.TestCase, TzFoldMixin):
     gettz = staticmethod(tz.gettz)
 
@@ -876,6 +1024,28 @@ class GettzTest(unittest.TestCase, TzFoldMixin):
         self.assertEqual(t_west.tzname(), 'WEST')
         self.assertEqual(t_west.utcoffset(), timedelta(hours=1))
         self.assertEqual(t_west.dst(), timedelta(hours=1))
+
+    def testGettzCacheTzFile(self):
+        NYC1 = tz.gettz('America/New_York')
+        NYC2 = tz.gettz('America/New_York')
+
+        assert NYC1 is NYC2
+
+    def testGettzCacheTzLocal(self):
+        local1 = tz.gettz()
+        local2 = tz.gettz()
+
+        assert local1 is not local2
+
+@pytest.mark.gettz
+@pytest.mark.xfail(IS_WIN, reason='zoneinfo separately cached')
+def test_gettz_cache_clear():
+    NYC1 = tz.gettz('America/New_York')
+    tz.gettz.cache_clear()
+
+    NYC2 = tz.gettz('America/New_York')
+
+    assert NYC1 is not NYC2
 
 
 class ZoneInfoGettzTest(GettzTest, WarningTestMixin):
@@ -939,11 +1109,11 @@ class ZoneInfoGettzTest(GettzTest, WarningTestMixin):
 
     def testZoneInfoDeprecated(self):
         with self.assertWarns(DeprecationWarning):
-            tzi = zoneinfo.gettz('US/Eastern')
+            zoneinfo.gettz('US/Eastern')
 
     def testZoneInfoMetadataDeprecated(self):
         with self.assertWarns(DeprecationWarning):
-            tzdb_md = zoneinfo.gettz_db_metadata()
+            zoneinfo.gettz_db_metadata()
 
 
 class TZRangeTest(unittest.TestCase, TzFoldMixin):
@@ -960,13 +1130,21 @@ class TZRangeTest(unittest.TestCase, TzFoldMixin):
                                              weekday=SU(+1)),
                          end=relativedelta(month=4, day=1, hour=2,
                                            weekday=SU(+1)))
+
+    TZ_LON = tz.tzrange('GMT', timedelta(hours=0),
+                        'BST', timedelta(hours=1),
+                        start=relativedelta(month=3, day=31, weekday=SU(-1),
+                                            hours=2),
+                        end=relativedelta(month=10, day=31, weekday=SU(-1),
+                                          hours=1))
     # POSIX string for UTC
     UTC = 'UTC'
 
     def gettz(self, tzname):
         tzname_map = {'Australia/Sydney': self.TZ_AEST,
                       'America/Toronto': self.TZ_EST,
-                      'America/New_York': self.TZ_EST}
+                      'America/New_York': self.TZ_EST,
+                      'Europe/London': self.TZ_LON}
 
         return tzname_map[tzname]
 
@@ -1080,6 +1258,7 @@ class TZRangeTest(unittest.TestCase, TzFoldMixin):
         self.assertFalse(TZR != ComparesEqual)
 
 
+@pytest.mark.tzstr
 class TZStrTest(unittest.TestCase, TzFoldMixin):
     # POSIX string indicating change to summer time on the 2nd Sunday in March
     # at 2AM, and ending the 1st Sunday in November at 2AM. (valid >= 2007)
@@ -1088,105 +1267,17 @@ class TZStrTest(unittest.TestCase, TzFoldMixin):
     # POSIX string for AEST/AEDT (valid >= 2008)
     TZ_AEST = 'AEST-10AEDT,M10.1.0/2,M4.1.0/3'
 
+    # POSIX string for GMT/BST
+    TZ_LON = 'GMT0BST,M3.5.0,M10.5.0'
+
     def gettz(self, tzname):
         # Actual time zone changes are handled by the _gettz_context function
         tzname_map = {'Australia/Sydney': self.TZ_AEST,
                       'America/Toronto': self.TZ_EST,
-                      'America/New_York': self.TZ_EST}
+                      'America/New_York': self.TZ_EST,
+                      'Europe/London': self.TZ_LON}
 
         return tz.tzstr(tzname_map[tzname])
-
-    def testStrStart1(self):
-        self.assertEqual(datetime(2003, 4, 6, 1, 59,
-                                  tzinfo=tz.tzstr("EST5EDT")).tzname(), "EST")
-        self.assertEqual(datetime(2003, 4, 6, 2, 00,
-                                  tzinfo=tz.tzstr("EST5EDT")).tzname(), "EDT")
-
-    def testStrEnd1(self):
-        self.assertEqual(datetime(2003, 10, 26, 0, 59,
-                                  tzinfo=tz.tzstr("EST5EDT")).tzname(), "EDT")
-
-        end = tz.enfold(datetime(2003, 10, 26, 1, 00,
-                                  tzinfo=tz.tzstr("EST5EDT")), fold=1)
-        self.assertEqual(end.tzname(), "EST")
-
-    def testStrStart2(self):
-        s = "EST5EDT,4,0,6,7200,10,0,26,7200,3600"
-        self.assertEqual(datetime(2003, 4, 6, 1, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EST")
-        self.assertEqual(datetime(2003, 4, 6, 2, 00,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-
-    def testStrEnd2(self):
-        s = "EST5EDT,4,0,6,7200,10,0,26,7200,3600"
-        self.assertEqual(datetime(2003, 10, 26, 0, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-
-        end = tz.enfold(datetime(2003, 10, 26, 1, 00,
-                                  tzinfo=tz.tzstr(s)), fold=1)
-        self.assertEqual(end.tzname(), "EST")
-
-    def testStrStart3(self):
-        s = "EST5EDT,4,1,0,7200,10,-1,0,7200,3600"
-        self.assertEqual(datetime(2003, 4, 6, 1, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EST")
-        self.assertEqual(datetime(2003, 4, 6, 2, 00,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-
-    def testStrEnd3(self):
-        s = "EST5EDT,4,1,0,7200,10,-1,0,7200,3600"
-        self.assertEqual(datetime(2003, 10, 26, 0, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-
-        end = tz.enfold(datetime(2003, 10, 26, 1, 00,
-                                  tzinfo=tz.tzstr(s)), fold=1)
-        self.assertEqual(end.tzname(), "EST")
-
-    def testStrStart4(self):
-        s = "EST5EDT4,M4.1.0/02:00:00,M10-5-0/02:00"
-        self.assertEqual(datetime(2003, 4, 6, 1, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EST")
-        self.assertEqual(datetime(2003, 4, 6, 2, 00,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-
-    def testStrEnd4(self):
-        s = "EST5EDT4,M4.1.0/02:00:00,M10-5-0/02:00"
-        self.assertEqual(datetime(2003, 10, 26, 0, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-        end = tz.enfold(datetime(2003, 10, 26, 1, 00, tzinfo=tz.tzstr(s)),
-                        fold=1)
-        self.assertEqual(end.tzname(), "EST")
-
-    def testStrStart5(self):
-        s = "EST5EDT4,95/02:00:00,298/02:00"
-        self.assertEqual(datetime(2003, 4, 6, 1, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EST")
-        self.assertEqual(datetime(2003, 4, 6, 2, 00,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-
-    def testStrEnd5(self):
-        s = "EST5EDT4,95/02:00:00,298/02"
-        self.assertEqual(datetime(2003, 10, 26, 0, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-        end = tz.enfold(datetime(2003, 10, 26, 1, 00,
-                                  tzinfo=tz.tzstr(s)), fold=1)
-        self.assertEqual(end.tzname(), "EST")
-
-    def testStrStart6(self):
-        s = "EST5EDT4,J96/02:00:00,J299/02:00"
-        self.assertEqual(datetime(2003, 4, 6, 1, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EST")
-        self.assertEqual(datetime(2003, 4, 6, 2, 00,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-
-    def testStrEnd6(self):
-        s = "EST5EDT4,J96/02:00:00,J299/02"
-        self.assertEqual(datetime(2003, 10, 26, 0, 59,
-                                  tzinfo=tz.tzstr(s)).tzname(), "EDT")
-
-        end = tz.enfold(datetime(2003, 10, 26, 1, 00,
-                                 tzinfo=tz.tzstr(s)), fold=1)
-        self.assertEqual(end.tzname(), "EST")
 
     def testStrStr(self):
         # Test that tz.tzstr() won't throw an error if given a str instead
@@ -1195,15 +1286,6 @@ class TZStrTest(unittest.TestCase, TzFoldMixin):
                                   tzinfo=tz.tzstr(str("EST5EDT"))).tzname(), "EST")
         self.assertEqual(datetime(2003, 4, 6, 2, 00,
                                   tzinfo=tz.tzstr(str("EST5EDT"))).tzname(), "EDT")
-
-    def testStrCmp1(self):
-        self.assertEqual(tz.tzstr("EST5EDT"),
-                         tz.tzstr("EST5EDT4,M4.1.0/02:00:00,M10-5-0/02:00"))
-
-    def testStrCmp2(self):
-        # TODO: This is parsing the default arguments.
-        self.assertEqual(tz.tzstr("EST5EDT"),
-                         tz.tzstr("EST5EDT,4,1,0,7200,10,-1,0,7200,3600"))
 
     def testStrInequality(self):
         TZS1 = tz.tzstr('EST5EDT4')
@@ -1262,10 +1344,195 @@ class TZStrTest(unittest.TestCase, TzFoldMixin):
         with self.assertRaises(ValueError):
             tz.tzstr('InvalidString;439999')
 
+    def testTzStrSingleton(self):
+        tz1 = tz.tzstr('EST5EDT')
+        tz2 = tz.tzstr('CST4CST')
+        tz3 = tz.tzstr('EST5EDT')
+
+        self.assertIsNot(tz1, tz2)
+        self.assertIs(tz1, tz3)
+
+    def testTzStrSingletonPosix(self):
+        tz_t1 = tz.tzstr('GMT+3', posix_offset=True)
+        tz_f1 = tz.tzstr('GMT+3', posix_offset=False)
+
+        tz_t2 = tz.tzstr('GMT+3', posix_offset=True)
+        tz_f2 = tz.tzstr('GMT+3', posix_offset=False)
+
+        self.assertIs(tz_t1, tz_t2)
+        self.assertIsNot(tz_t1, tz_f1)
+
+        self.assertIs(tz_f1, tz_f2)
+
+    def testTzStrInstance(self):
+        tz1 = tz.tzstr('EST5EDT')
+        tz2 = tz.tzstr.instance('EST5EDT')
+        tz3 = tz.tzstr.instance('EST5EDT')
+
+        assert tz1 is not tz2
+        assert tz2 is not tz3
+
+        # Ensure that these still are all the same zone
+        assert tz1 == tz2 == tz3
+
+@pytest.mark.tzstr
+@pytest.mark.parametrize('tz_str,expected', [
+    # From https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
+    ('', tz.tzrange(None)),     # TODO: Should change this so tz.tzrange('') works
+    ('EST+5EDT,M3.2.0/2,M11.1.0/12',
+     tz.tzrange('EST', -18000, 'EDT', -14400,
+        start=relativedelta(month=3, day=1, weekday=SU(2), hours=2),
+        end=relativedelta(month=11, day=1, weekday=SU(1), hours=11))),
+    ('WART4WARST,J1/0,J365/25',  # This is DST all year, Western Argentina Summer Time
+     tz.tzrange('WART', timedelta(hours=-4), 'WARST',
+        start=relativedelta(month=1, day=1, hours=0),
+        end=relativedelta(month=12, day=31, days=1))),
+    ('IST-2IDT,M3.4.4/26,M10.5.0',      # Israel Standard / Daylight Time
+     tz.tzrange('IST', timedelta(hours=2), 'IDT',
+        start=relativedelta(month=3, day=1, weekday=TH(4), days=1, hours=2),
+        end=relativedelta(month=10, day=31, weekday=SU(-1), hours=1))),
+    ('WGT3WGST,M3.5.0/2,M10.5.0/1',
+     tz.tzrange('WGT', timedelta(hours=-3), 'WGST',
+        start=relativedelta(month=3, day=31, weekday=SU(-1), hours=2),
+        end=relativedelta(month=10, day=31, weekday=SU(-1), hours=0))),
+
+    # Different offset specifications
+    ('WGT0300WGST',
+     tz.tzrange('WGT', timedelta(hours=-3), 'WGST')),
+    ('WGT03:00WGST',
+     tz.tzrange('WGT', timedelta(hours=-3), 'WGST')),
+    ('AEST-1100AEDT',
+     tz.tzrange('AEST', timedelta(hours=11), 'AEDT')),
+    ('AEST-11:00AEDT',
+     tz.tzrange('AEST', timedelta(hours=11), 'AEDT')),
+
+    # Different time formats
+    ('EST5EDT,M3.2.0/4:00,M11.1.0/3:00',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(month=3, day=1, weekday=SU(2), hours=4),
+        end=relativedelta(month=11, day=1, weekday=SU(1), hours=2))),
+    ('EST5EDT,M3.2.0/04:00,M11.1.0/03:00',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(month=3, day=1, weekday=SU(2), hours=4),
+        end=relativedelta(month=11, day=1, weekday=SU(1), hours=2))),
+    ('EST5EDT,M3.2.0/0400,M11.1.0/0300',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(month=3, day=1, weekday=SU(2), hours=4),
+        end=relativedelta(month=11, day=1, weekday=SU(1), hours=2))),
+])
+def test_valid_GNU_tzstr(tz_str, expected):
+    tzi = tz.tzstr(tz_str)
+
+    assert tzi == expected
+
+
+@pytest.mark.tzstr
+@pytest.mark.parametrize('tz_str, expected', [
+    ('EST5EDT,5,4,0,7200,11,3,0,7200',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(month=5, day=1, weekday=SU(+4), hours=+2),
+        end=relativedelta(month=11, day=1, weekday=SU(+3), hours=+1))),
+    ('EST5EDT,5,-4,0,7200,11,3,0,7200',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(hours=+2, month=5, day=31, weekday=SU(-4)),
+        end=relativedelta(hours=+1, month=11, day=1, weekday=SU(+3)))),
+    ('EST5EDT,5,4,0,7200,11,-3,0,7200',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(hours=+2, month=5, day=1, weekday=SU(+4)),
+        end=relativedelta(hours=+1, month=11, day=31, weekday=SU(-3)))),
+    ('EST5EDT,5,4,0,7200,11,-3,0,7200,3600',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(hours=+2, month=5, day=1, weekday=SU(+4)),
+        end=relativedelta(hours=+1, month=11, day=31, weekday=SU(-3)))),
+    ('EST5EDT,5,4,0,7200,11,-3,0,7200,3600',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(hours=+2, month=5, day=1, weekday=SU(+4)),
+        end=relativedelta(hours=+1, month=11, day=31, weekday=SU(-3)))),
+    ('EST5EDT,5,4,0,7200,11,-3,0,7200,-3600',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT', timedelta(hours=-6),
+        start=relativedelta(hours=+2, month=5, day=1, weekday=SU(+4)),
+        end=relativedelta(hours=+3, month=11, day=31, weekday=SU(-3)))),
+    ('EST5EDT,5,4,0,7200,11,-3,0,7200,+7200',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT', timedelta(hours=-3),
+        start=relativedelta(hours=+2, month=5, day=1, weekday=SU(+4)),
+        end=relativedelta(hours=0, month=11, day=31, weekday=SU(-3)))),
+    ('EST5EDT,5,4,0,7200,11,-3,0,7200,+3600',
+     tz.tzrange('EST', timedelta(hours=-5), 'EDT',
+        start=relativedelta(hours=+2, month=5, day=1, weekday=SU(+4)),
+        end=relativedelta(hours=+1, month=11, day=31, weekday=SU(-3)))),
+])
+def test_valid_dateutil_format(tz_str, expected):
+    # This tests the dateutil-specific format that is used widely in the tests
+    # and examples. It is unclear where this format originated from.
+    with pytest.warns(tz.DeprecatedTzFormatWarning):
+        tzi = tz.tzstr.instance(tz_str)
+
+    assert tzi == expected
+
+
+@pytest.mark.tzstr
+@pytest.mark.parametrize('tz_str', [
+    'hdfiughdfuig,dfughdfuigpu87ñ::',
+    ',dfughdfuigpu87ñ::',
+    '-1:WART4WARST,J1,J365/25',
+    'WART4WARST,J1,J365/-25',
+    'IST-2IDT,M3.4.-1/26,M10.5.0',
+    'IST-2IDT,M3,2000,1/26,M10,5,0'
+])
+def test_invalid_GNU_tzstr(tz_str):
+    with pytest.raises(ValueError):
+        tz.tzstr(tz_str)
+
+
+# Different representations of the same default rule set
+DEFAULT_TZSTR_RULES_EQUIV_2003 = [
+    'EST5EDT',
+    'EST5EDT4,M4.1.0/02:00:00,M10-5-0/02:00',
+    'EST5EDT4,95/02:00:00,298/02:00',
+    'EST5EDT4,J96/02:00:00,J299/02:00',
+    'EST5EDT4,J96/02:00:00,J299/02'
+]
+
+
+@pytest.mark.tzstr
+@pytest.mark.parametrize('tz_str', DEFAULT_TZSTR_RULES_EQUIV_2003)
+def test_tzstr_default_start(tz_str):
+    tzi = tz.tzstr(tz_str)
+    dt_std = datetime(2003, 4, 6, 1, 59, tzinfo=tzi)
+    dt_dst = datetime(2003, 4, 6, 2, 00, tzinfo=tzi)
+
+    assert get_timezone_tuple(dt_std) == EST_TUPLE
+    assert get_timezone_tuple(dt_dst) == EDT_TUPLE
+
+
+@pytest.mark.tzstr
+@pytest.mark.parametrize('tz_str', DEFAULT_TZSTR_RULES_EQUIV_2003)
+def test_tzstr_default_end(tz_str):
+    tzi = tz.tzstr(tz_str)
+    dt_dst = datetime(2003, 10, 26, 0, 59, tzinfo=tzi)
+    dt_dst_ambig = datetime(2003, 10, 26, 1, 00, tzinfo=tzi)
+    dt_std_ambig = tz.enfold(dt_dst_ambig, fold=1)
+    dt_std = datetime(2003, 10, 26, 2, 00, tzinfo=tzi)
+
+    assert get_timezone_tuple(dt_dst) == EDT_TUPLE
+    assert get_timezone_tuple(dt_dst_ambig) == EDT_TUPLE
+    assert get_timezone_tuple(dt_std_ambig) == EST_TUPLE
+    assert get_timezone_tuple(dt_std) == EST_TUPLE
+
+
+@pytest.mark.tzstr
+@pytest.mark.parametrize('tzstr_1', ['EST5EDT',
+                                     'EST5EDT4,M4.1.0/02:00:00,M10-5-0/02:00'])
+@pytest.mark.parametrize('tzstr_2', ['EST5EDT',
+                                     'EST5EDT4,M4.1.0/02:00:00,M10-5-0/02:00'])
+def test_tzstr_default_cmp(tzstr_1, tzstr_2):
+    tz1 = tz.tzstr(tzstr_1)
+    tz2 = tz.tzstr(tzstr_2)
+
+    assert tz1 == tz2
 
 class TZICalTest(unittest.TestCase, TzFoldMixin):
-
-    def gettz(self, tzname):
+    def _gettz_str_tuple(self, tzname):
         TZ_EST = (
             'BEGIN:VTIMEZONE',
             'TZID:US-Eastern',
@@ -1284,7 +1551,27 @@ class TZICalTest(unittest.TestCase, TzFoldMixin):
             'TZNAME:EDT',
             'END:DAYLIGHT',
             'END:VTIMEZONE'
-            )
+        )
+
+        TZ_PST = (
+            'BEGIN:VTIMEZONE',
+            'TZID:US-Pacific',
+            'BEGIN:STANDARD',
+            'DTSTART:19971029T020000',
+            'RRULE:FREQ=YEARLY;BYDAY=+1SU;BYMONTH=11',
+            'TZOFFSETFROM:-0700',
+            'TZOFFSETTO:-0800',
+            'TZNAME:PST',
+            'END:STANDARD',
+            'BEGIN:DAYLIGHT',
+            'DTSTART:19980301T020000',
+            'RRULE:FREQ=YEARLY;BYDAY=+2SU;BYMONTH=03',
+            'TZOFFSETFROM:-0800',
+            'TZOFFSETTO:-0700',
+            'TZNAME:PDT',
+            'END:DAYLIGHT',
+            'END:VTIMEZONE'
+        )
 
         TZ_AEST = (
             'BEGIN:VTIMEZONE',
@@ -1304,13 +1591,57 @@ class TZICalTest(unittest.TestCase, TzFoldMixin):
             'TZNAME:AEDT',
             'END:DAYLIGHT',
             'END:VTIMEZONE'
-            )
+        )
+
+        TZ_LON = (
+            'BEGIN:VTIMEZONE',
+            'TZID:Europe-London',
+            'BEGIN:STANDARD',
+            'DTSTART:19810301T030000',
+            'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10;BYHOUR=02',
+            'TZOFFSETFROM:+0100',
+            'TZOFFSETTO:+0000',
+            'TZNAME:GMT',
+            'END:STANDARD',
+            'BEGIN:DAYLIGHT',
+            'DTSTART:19961001T030000',
+            'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=03;BYHOUR=01',
+            'TZOFFSETFROM:+0000',
+            'TZOFFSETTO:+0100',
+            'TZNAME:BST',
+            'END:DAYLIGHT',
+            'END:VTIMEZONE'
+        )
 
         tzname_map = {'Australia/Sydney': TZ_AEST,
                       'America/Toronto': TZ_EST,
-                      'America/New_York': TZ_EST}
+                      'America/New_York': TZ_EST,
+                      'America/Los_Angeles': TZ_PST,
+                      'Europe/London': TZ_LON}
 
-        tzc = tz.tzical(StringIO('\n'.join(tzname_map[tzname]))).get()
+        return tzname_map[tzname]
+
+    def _gettz_str(self, tzname):
+        return '\n'.join(self._gettz_str_tuple(tzname))
+
+    def _tzstr_dtstart_with_params(self, tzname, param_str):
+        # Adds parameters to the DTSTART values of a given tzstr
+        tz_str_tuple = self._gettz_str_tuple(tzname)
+
+        out_tz = []
+        for line in tz_str_tuple:
+            if line.startswith('DTSTART'):
+                name, value = line.split(':', 1)
+                line = name + ';' + param_str + ':' + value
+
+            out_tz.append(line)
+
+        return '\n'.join(out_tz)
+
+    def gettz(self, tzname):
+        tz_str = self._gettz_str(tzname)
+
+        tzc = tz.tzical(StringIO(tz_str)).get()
 
         return tzc
 
@@ -1321,16 +1652,15 @@ class TZICalTest(unittest.TestCase, TzFoldMixin):
 
         self.assertEqual(repr(tzc), "tzical(" + repr(instr.name) + ")")
 
-
     # Test performance
     def _test_us_zone(self, tzc, func, values, start):
         if start:
-            dt1 = datetime(2003, 4, 6, 1, 59)
-            dt2 = datetime(2003, 4, 6, 2, 00)
+            dt1 = datetime(2003, 3, 9, 1, 59)
+            dt2 = datetime(2003, 3, 9, 2, 00)
             fold = [0, 0]
         else:
-            dt1 = datetime(2003, 10, 26, 0, 59)
-            dt2 = datetime(2003, 10, 26, 1, 00)
+            dt1 = datetime(2003, 11, 2, 0, 59)
+            dt2 = datetime(2003, 11, 2, 1, 00)
             fold = [0, 1]
 
         dts = (tz.enfold(dt.replace(tzinfo=tzc), fold=f)
@@ -1340,17 +1670,20 @@ class TZICalTest(unittest.TestCase, TzFoldMixin):
             self.assertEqual(func(dt), value)
 
     def _test_multi_zones(self, tzstrs, tzids, func, values, start):
-        tzic = tz.tzical(StringIO(''.join(tzstrs)))
+        tzic = tz.tzical(StringIO('\n'.join(tzstrs)))
         for tzid, vals in zip(tzids, values):
             tzc = tzic.get(tzid)
 
             self._test_us_zone(tzc, func, vals, start)
 
     def _prepare_EST(self):
-        return tz.tzical(StringIO(TZICAL_EST5EDT)).get()
+        tz_str = self._gettz_str('America/New_York')
+        return tz.tzical(StringIO(tz_str)).get()
 
-    def _testEST(self, start, test_type):
-        tzc = self._prepare_EST()
+    def _testEST(self, start, test_type, tzc=None):
+        if tzc is None:
+            tzc = self._prepare_EST()
+
         argdict = {
             'name':   (datetime.tzname, ('EST', 'EDT')),
             'offset': (datetime.utcoffset, (timedelta(hours=-5),
@@ -1384,8 +1717,22 @@ class TZICalTest(unittest.TestCase, TzFoldMixin):
     def testESTEndDST(self):
         self._testEST(start=False, test_type='dst')
 
+    def testESTValueDatetime(self):
+        # Violating one-test-per-test rule because we're not set up to do
+        # parameterized tests and the manual proliferation is getting a bit
+        # out of hand.
+        tz_str = self._tzstr_dtstart_with_params('America/New_York',
+                                                 'VALUE=DATE-TIME')
+
+        tzc = tz.tzical(StringIO(tz_str)).get()
+
+        for start in (True, False):
+            for test_type in ('name', 'offset', 'dst'):
+                self._testEST(start=start, test_type=test_type, tzc=tzc)
+
     def _testMultizone(self, start, test_type):
-        tzstrs = (TZICAL_EST5EDT, TZICAL_PST8PDT)
+        tzstrs = (self._gettz_str('America/New_York'),
+                  self._gettz_str('America/Los_Angeles'))
         tzids = ('US-Eastern', 'US-Pacific')
 
         argdict = {
@@ -1427,7 +1774,9 @@ class TZICalTest(unittest.TestCase, TzFoldMixin):
         self._testMultizone(start=False, test_type='dst')
 
     def testMultiZoneKeys(self):
-        tzic = tz.tzical(StringIO(''.join((TZICAL_EST5EDT, TZICAL_PST8PDT))))
+        est_str = self._gettz_str('America/New_York')
+        pst_str = self._gettz_str('America/Los_Angeles')
+        tzic = tz.tzical(StringIO('\n'.join((est_str, pst_str))))
 
         # Sort keys because they are in a random order, being dictionary keys
         keys = sorted(tzic.keys())
@@ -1444,6 +1793,24 @@ class TZICalTest(unittest.TestCase, TzFoldMixin):
 
         with self.assertRaises(ValueError):
             tzic.get()
+
+    def testDtstartDate(self):
+        tz_str = self._tzstr_dtstart_with_params('America/New_York',
+                                                 'VALUE=DATE')
+        with self.assertRaises(ValueError):
+            tz.tzical(StringIO(tz_str))
+
+    def testDtstartTzid(self):
+        tz_str = self._tzstr_dtstart_with_params('America/New_York',
+                                                 'TZID=UTC')
+        with self.assertRaises(ValueError):
+            tz.tzical(StringIO(tz_str))
+
+    def testDtstartBadParam(self):
+        tz_str = self._tzstr_dtstart_with_params('America/New_York',
+                                                 'FOO=BAR')
+        with self.assertRaises(ValueError):
+            tz.tzical(StringIO(tz_str))
 
     # Test Parsing
     def testGap(self):
@@ -1484,6 +1851,14 @@ class TZTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             tz.tzfile(BytesIO(b'BadFile'))
 
+    def testFilestreamWithNameRepr(self):
+        # If fileobj is a filestream with a "name" attribute this name should
+        # be reflected in the tz object's repr
+        fileobj = BytesIO(base64.b64decode(TZFILE_EST5EDT))
+        fileobj.name = 'foo'
+        tzc = tz.tzfile(fileobj)
+        self.assertEqual(repr(tzc), 'tzfile(' + repr('foo') + ')')
+
     def testRoundNonFullMinutes(self):
         # This timezone has an offset of 5992 seconds in 1900-01-01.
         tzc = tz.tzfile(BytesIO(base64.b64decode(EUROPE_HELSINKI)))
@@ -1501,7 +1876,7 @@ class TZTest(unittest.TestCase):
         # work NEW_YORK must be in TZif version 1 format i.e. no more data
         # after TZif v1 header + data has been read
         fileobj = BytesIO(base64.b64decode(NEW_YORK))
-        tzc = tz.tzfile(fileobj)
+        tz.tzfile(fileobj)
         # we expect no remaining file content now, i.e. zero-length; if there's
         # still data we haven't read the file format correctly
         remaining_tzfile_content = fileobj.read()
@@ -1698,7 +2073,7 @@ class TzWinLocalTest(unittest.TestCase, TzWinFoldMixin):
         self.context = TZWinContext
 
     def get_args(self, tzname):
-        return tuple()
+        return ()
 
     def testLocal(self):
         # Not sure how to pin a local time zone, so for now we're just going
@@ -1816,17 +2191,18 @@ class TzPickleTest(PicklableMixin, unittest.TestCase):
                                        asfile=self._asfile)
 
     def testPickleTzUTC(self):
-        self.assertPicklable(tz.tzutc())
+        self.assertPicklable(tz.tzutc(), singleton=True)
 
     def testPickleTzOffsetZero(self):
-        self.assertPicklable(tz.tzoffset('UTC', 0))
+        self.assertPicklable(tz.tzoffset('UTC', 0), singleton=True)
 
     def testPickleTzOffsetPos(self):
-        self.assertPicklable(tz.tzoffset('UTC+1', 3600))
+        self.assertPicklable(tz.tzoffset('UTC+1', 3600), singleton=True)
 
     def testPickleTzOffsetNeg(self):
-        self.assertPicklable(tz.tzoffset('UTC-1', -3600))
+        self.assertPicklable(tz.tzoffset('UTC-1', -3600), singleton=True)
 
+    @pytest.mark.tzlocal
     def testPickleTzLocal(self):
         self.assertPicklable(tz.tzlocal())
 
@@ -2112,3 +2488,116 @@ class EnfoldTest(unittest.TestCase):
 
         # Before Python 3.6, dt.fold won't exist if fold is 0.
         self.assertEqual(getattr(dt, 'fold', 0), 0)
+
+
+@pytest.mark.tz_resolve_imaginary
+class ImaginaryDateTest(unittest.TestCase):
+    def testCanberraForward(self):
+        tzi = tz.gettz('Australia/Canberra')
+        dt = datetime(2018, 10, 7, 2, 30, tzinfo=tzi)
+        dt_act = tz.resolve_imaginary(dt)
+        dt_exp = datetime(2018, 10, 7, 3, 30, tzinfo=tzi)
+        self.assertEqual(dt_act, dt_exp)
+
+    def testLondonForward(self):
+        tzi = tz.gettz('Europe/London')
+        dt = datetime(2018, 3, 25, 1, 30, tzinfo=tzi)
+        dt_act = tz.resolve_imaginary(dt)
+        dt_exp = datetime(2018, 3, 25, 2, 30, tzinfo=tzi)
+        self.assertEqual(dt_act, dt_exp)
+
+    def testKeivForward(self):
+        tzi = tz.gettz('Europe/Kiev')
+        dt = datetime(2018, 3, 25, 3, 30, tzinfo=tzi)
+        dt_act = tz.resolve_imaginary(dt)
+        dt_exp = datetime(2018, 3, 25, 4, 30, tzinfo=tzi)
+        self.assertEqual(dt_act, dt_exp)
+
+
+@pytest.mark.tz_resolve_imaginary
+@pytest.mark.parametrize('dt', [
+    datetime(2017, 11, 5, 1, 30, tzinfo=tz.gettz('America/New_York')),
+    datetime(2018, 10, 28, 1, 30, tzinfo=tz.gettz('Europe/London')),
+    datetime(2017, 4, 2, 2, 30, tzinfo=tz.gettz('Australia/Sydney')),
+])
+def test_resolve_imaginary_ambiguous(dt):
+    assert tz.resolve_imaginary(dt) is dt
+
+    dt_f = tz.enfold(dt)
+    assert dt is not dt_f
+    assert tz.resolve_imaginary(dt_f) is dt_f
+
+
+@pytest.mark.tz_resolve_imaginary
+@pytest.mark.parametrize('dt', [
+    datetime(2017, 6, 2, 12, 30, tzinfo=tz.gettz('America/New_York')),
+    datetime(2018, 4, 2, 9, 30, tzinfo=tz.gettz('Europe/London')),
+    datetime(2017, 2, 2, 16, 30, tzinfo=tz.gettz('Australia/Sydney')),
+    datetime(2017, 12, 2, 12, 30, tzinfo=tz.gettz('America/New_York')),
+    datetime(2018, 12, 2, 9, 30, tzinfo=tz.gettz('Europe/London')),
+    datetime(2017, 6, 2, 16, 30, tzinfo=tz.gettz('Australia/Sydney')),
+    datetime(2025, 9, 25, 1, 17, tzinfo=tz.tzutc()),
+    datetime(2025, 9, 25, 1, 17, tzinfo=tz.tzoffset('EST', -18000)),
+    datetime(2019, 3, 4, tzinfo=None)
+])
+def test_resolve_imaginary_existing(dt):
+    assert tz.resolve_imaginary(dt) is dt
+
+
+def __get_kiritimati_resolve_imaginary_test():
+    # In the 2018d release of the IANA database, the Kiritimati "imaginary day"
+    # data was corrected, so if the system zoneinfo is older than 2018d, the
+    # Kiritimati test will fail.
+
+    tzi = tz.gettz('Pacific/Kiritimati')
+    new_version = False
+    if not tz.datetime_exists(datetime(1995, 1, 1, 12, 30), tzi):
+        zif = zoneinfo.get_zonefile_instance()
+        if zif.metadata is not None:
+            new_version = zif.metadata['tzversion'] >= '2018d'
+
+        if new_version:
+            tzi = zif.get('Pacific/Kiritimati')
+    else:
+        new_version = True
+
+    if new_version:
+        dates = (datetime(1994, 12, 31, 12, 30), datetime(1995, 1, 1, 12, 30))
+    else:
+        dates = (datetime(1995, 1, 1, 12, 30), datetime(1995, 1, 2, 12, 30))
+
+    return (tzi, ) + dates
+
+
+@pytest.mark.tz_resolve_imaginary
+@pytest.mark.parametrize('tzi, dt, dt_exp', [
+    (tz.gettz('Europe/London'),
+     datetime(2018, 3, 25, 1, 30), datetime(2018, 3, 25, 2, 30)),
+    (tz.gettz('America/New_York'),
+     datetime(2017, 3, 12, 2, 30), datetime(2017, 3, 12, 3, 30)),
+    (tz.gettz('Australia/Sydney'),
+     datetime(2014, 10, 5, 2, 0), datetime(2014, 10, 5, 3, 0)),
+    __get_kiritimati_resolve_imaginary_test(),
+])
+def test_resolve_imaginary(tzi, dt, dt_exp):
+    dt = dt.replace(tzinfo=tzi)
+    dt_exp = dt_exp.replace(tzinfo=tzi)
+
+    dt_r = tz.resolve_imaginary(dt)
+    assert dt_r == dt_exp
+    assert dt_r.tzname() == dt_exp.tzname()
+    assert dt_r.utcoffset() == dt_exp.utcoffset()
+
+
+@pytest.mark.xfail
+@pytest.mark.tz_resolve_imaginary
+def test_resolve_imaginary_monrovia():
+    # See GH #582 - When that is resolved, move this into test_resolve_imaginary
+    tzi = tz.gettz('Africa/Monrovia')
+    dt = datetime(1972, 1, 7, hour=0, minute=30, second=0, tzinfo=tzi)
+    dt_exp = datetime(1972, 1, 7, hour=1, minute=14, second=30, tzinfo=tzi)
+
+    dt_r = tz.resolve_imaginary(dt)
+    assert dt_r == dt_exp
+    assert dt_r.tzname() == dt_exp.tzname()
+    assert dt_r.utcoffset() == dt_exp.utcoffset()

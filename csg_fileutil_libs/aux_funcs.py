@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.7.1
+# v2.7.2
 #
 
 from __future__ import absolute_import
@@ -94,7 +94,7 @@ def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_in
     fields_order allows to precise what columns to put first (you don't need to specify all columns, only the ones you want first, the rest being alphabetically ordered). If None, alphabetical order will be used. If False, the original order will be used.
     csv_order_by allows to order rows according to the alphabetical order of the specified column(s)
     keep_index will save rows indices in the csv if True
-    blankna fills None, NaN and NaT with an empty string ''. This can be useful for 2 purposes: 1) more human readability, 2) pandas will more easily understand a field is empty, even if the correct datatype is not set (eg, datetime null value is NaT, but at loading the column will be type 'object' which means NaT values won't be considered null).
+    blankna fills None, NaN and NaT with an empty string ''. This can be useful for 2 purposes: 1) more human readability, 2) pandas will more easily understand a field is empty, even if the correct datatype is not set (eg, datetime null value is NaT, but at loading the column will be type 'object' which means NaT values won't be considered null). Note however that if you want to use date_format or float_format or decimal options of pd.to_csv(), they will not work since the columns datatypes will be converted to object/string.
     Encoding is by default 'utf-8-sig', which is UTF-8 with an encoding BOM in the file's header, this is necessary for Excel 2007 to correctly read the file (else it assumes latin-1): 
     If excel is True, will save as an excel file (which better supports accentuated/special characters).
     Combine with df_to_unicode() or df_to_unicode_fast() in case of encoding issues.
@@ -115,8 +115,13 @@ def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_in
         print('CSV fields order: '+str(fields_order))
     # Blank none values
     if blankna:
+        # Blank only non-datetime columns, else this will prevent reformatting on saving (because they will be considered as object/string and not date)
+        #cols_except_date = [col for col in d.columns if d[col].dtype.name != 'datetime64[ns]']
+        #d[cols_except_date] = d[cols_except_date].fillna('')
+        # Blank every null values
         d = d.fillna('')
-        d[d.isna() | (d == 'None') | (d == 'NONE') | (d == 'none') | (d == 'NaN') | (d == 'nan') | (d == 'NaT') | (d == 'nat') | (d == 'na') | (d == 'NA') | (d == 'N/A')] = ''  # replace also any null value hidden as a string
+        # replace also any null value hidden as a string
+        d[d.isna() | (d == 'None') | (d == 'NONE') | (d == 'none') | (d == 'NaN') | (d == 'nan') | (d == 'NaT') | (d == 'nat') | (d == 'na') | (d == 'NA') | (d == 'N/A')] = ''
 
     # Write the csv
     if csv_order_by is not None:
@@ -289,12 +294,13 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         # Respect the original keys and return one result for each key (can be multilevel, eg subject + date)
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
 
-def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, join_on_shared_keys=True, verbose=False, **kwargs):
+def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, fillna_exclude=None, join_on_shared_keys=True, verbose=False, **kwargs):
     """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
     mode=0 is or test, 1 is and test. In other words, this is a join with fuzzy matching on one column (based on name/id) but supporting multiple columns with exact matching for the others.
     `keep_nulls=True` if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
     `col` can either be a string for a merge based on a single column (usually name), or an OrderedDict of multiple columns names and types, following this formatting: [OrderedDict([('column1_name', 'column1_type'), ('column2_name', 'column2_type')]), OrderedDict([...])] so that you have one ordered dict for each input dataframe, and with the same number of columns (even if the names are different) and in the same order (eg, name is first column, date of acquisition as second column, etc)
     If `fillna=True`, subjects with multiple rows/sessions will be squashed and rows with missing infos will be completed from rows where the info is available (in case there are multiple information, they will all be present as a list). This is only useful when merging (and hence argument `col`) is multi-columns. The key columns are never filled, even if `fillna=True`.
+    If `fillna_exclude` is specified with a list of columns, this list of columns won't be filled (particularly useful for dates).
     if `join_on_shared_keys=True`, if merging on multi-columns and not the same number of key columns are supplied, the merge will be done on only the shared keys in both dataframes: this is very convenient to allow to groupby in one dataframe according to some keys but not in the other one (eg, one is grouped by name and date so both are kept, while the other one is only grouped by name).
     """
     ### Preparing the input dataframes
@@ -436,11 +442,14 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
             df1 = df_concatenate_all_but(df1, keycol[0].keys(), setindex=False)
             df2 = df_concatenate_all_but(df2, keycol[1].keys(), setindex=False)
             # Preprocessing key columns with specific datatypes (eg, datetime), else they won't be comparable across the two input DataFrames
-            for df, kcol in zip([df1, df2], keycol):  # for each dataframe and the corresponding key columns list
+            for dfid, kcol in zip([1, 2], keycol):  # for each dataframe and the corresponding key columns list
                 for colname, coltype in kcol.items():  # loop through each key column for this dataframe
                     # datetime type: will convert the column into a datetime format by interpreting it given the formatting provided by user in the following format, separated by a '|': 'datetime|%formatting%here'
                     if coltype.startswith('datetime'):
-                        df = convert_to_datetype(df, colname, coltype.split('|')[1])
+                        if dfid == 1:
+                            df1 = convert_to_datetype(df1, colname, coltype.split('|')[1])
+                        elif dfid == 2:
+                            df2 = convert_to_datetype(df2, colname, coltype.split('|')[1])
                     # other types: we do nothing (the id type is already taken care of at the beginning of the function, the rest is undefined at the moment)
             # Final merge of all columns
             #return df1, df2  # debug: in case of bug, return df1 and df2 and try to do the subsequent commands in a notebook, easiest way to debug
@@ -471,7 +480,9 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                     print('Duplicated rows found, dropping them automatically, please contact the developer to fix this issue (as this should not happen!).')
                     dfinal = dfinal.drop_duplicates(keep='first')
                 # Generate an aggregate only based on id
-                dfinal_agg = dfinal.drop(columns=[colname for kcol in keycol for colname, coltype in kcol.items() if coltype != 'id']).fillna('').groupby(by=col, sort=False).agg(concat_vals_unique)
+                if fillna_exclude is None:
+                    fillna_exclude = []
+                dfinal_agg = dfinal.drop(columns=[colname for kcol in keycol for colname, coltype in kcol.items() if coltype != 'id']+fillna_exclude).fillna('').groupby(by=col, sort=False).agg(concat_vals_unique)
                 # Fill nan values from other rows of the same subject, by using pandas.combine_first() function
                 dfinal = dfinal.set_index(col).combine_first(dfinal_agg.reset_index().set_index(col)).reset_index()
             # Create new columns merging key columns info (similarly to names), this can be useful for further merge (ie, to use one merged key column instead of two different)
@@ -481,11 +492,11 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                 if col1type != 'id':
                     colcombined = col1name+' + '+col2name
                     # Copy from first dataframe's key column values
-                    dfinal[col1name+' + '+col2name] = dfinal[col1name]
-                    # Copy datatype from the original dataframe. Since pandas.merge() loses the datatype info of the columns after merging, we need to use the original dataframes where we already converted the key columns to the correct datatypes: https://stackoverflow.com/questions/29280393/python-pandas-merge-loses-categorical-columns
-                    dfinal[col1name+' + '+col2name].astype(df1[col1name].dtype, inplace=True)
-                    # Finally, where there is an empty value, copy from the second dataframe's (from the corresponding key column)
-                    dfinal.loc[dfinal[col1name].isnull(), colcombined] = df2[col2name]
+                    dfinal[colcombined] = dfinal[col1name]
+                    # Copy datatype from the original dataframe. Since pandas.merge() can lose (but not always) the datatype info of the columns after merging, we need to use the original dataframes where we already converted the key columns to the correct datatypes: https://stackoverflow.com/questions/29280393/python-pandas-merge-loses-categorical-columns
+                    dfinal[colcombined].astype(df1[col1name].dtype, inplace=True)
+                    # Finally, where there is an empty value, copy from the second column coming from the second dataframe (from the corresponding key column) - we copy from dfinal to ensure the index is correct (else we merge on a random index and this is bad!)
+                    dfinal.loc[dfinal[col1name].isnull(), colcombined] = dfinal[col2name]
         # Keep log of original names from both databases, by creating other columns "_altx_orig", "_altx_orig2" and "_anyx" to store the name from 2nd database and create a column with any name from first db or second db
         for x in range(1000):
             # If we do multiple merge, we will have multiple name_alt columns: name_alt0, name_alt1, etc
@@ -603,7 +614,7 @@ def df_remap_names(df, dfremap, col='name', col2='name2', keep_nulls=False):
         df2[col] = df2[col].apply(lambda x: replace_nonnull_df(x, repmap))
     return df2
 
-def convert_to_datetype(df, col, dtformat, **kwargs):
+def convert_to_datetype(df, col, dtformat=None, **kwargs):
     """Convert a column of a dataframe to date type with the given format"""
     df2 = df.copy()
     if not df2.index.name is None:
@@ -972,20 +983,24 @@ def date_clean(s):
             return None
         else:
             try:
-                # Try to parse with formatting with day first
-                return dateutil_parser.parse(cleaned_date, dayfirst=True, fuzzy=True)
+                # First try an ISO date parsing, this is to circumvent bad decoding when month is in the middle, see: https://github.com/dateutil/dateutil/pull/340
+                return dateutil_parser.isoparse(cleaned_date)
             except ValueError as exc:
-                # If failed, try with year first
                 try:
-                    m = re.search('\d+', s, re.UNICODE)
-                    if len(m.group(0)) == 4:
-                        return dateutil_parser.parse(cleaned_date, yearfirst=True, fuzzy=True)
-                    else:
-                        raise
-                except Exception as exc:
-                    # Else we print an error but we pass (we just don't use this date)
-                    print('Warning: Failed parsing this date: %s' % s)
-                    return None
+                    # Try to parse with formatting with day first
+                    return dateutil_parser.parse(cleaned_date, dayfirst=True, fuzzy=True)
+                except ValueError as exc:
+                    # If failed, try with year first
+                    try:
+                        m = re.search('\d+', s, re.UNICODE)
+                        if len(m.group(0)) == 4:
+                            return dateutil_parser.parse(cleaned_date, yearfirst=True, fuzzy=True)
+                        else:
+                            raise
+                    except Exception as exc:
+                        # Else we print an error but we pass (we just don't use this date)
+                        print('Warning: Failed parsing this date: %s' % s)
+                        return None
 
 def df_date_clean(df_in, col):
     """Apply fuzzy date cleaning (and datetype conversion) to a dataframe's column"""
