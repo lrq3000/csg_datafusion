@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.6.5
+# v2.7.0
 #
 
 from __future__ import absolute_import
@@ -289,12 +289,13 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         # Respect the original keys and return one result for each key (can be multilevel, eg subject + date)
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
 
-def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, verbose=False, **kwargs):
+def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, join_on_shared_keys=True, verbose=False, **kwargs):
     """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
     mode=0 is or test, 1 is and test. In other words, this is a join with fuzzy matching on one column (based on name/id) but supporting multiple columns with exact matching for the others.
     `keep_nulls=True` if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
     `col` can either be a string for a merge based on a single column (usually name), or an OrderedDict of multiple columns names and types, following this formatting: [OrderedDict([('column1_name', 'column1_type'), ('column2_name', 'column2_type')]), OrderedDict([...])] so that you have one ordered dict for each input dataframe, and with the same number of columns (even if the names are different) and in the same order (eg, name is first column, date of acquisition as second column, etc)
     If `fillna=True`, subjects with multiple rows/sessions will be squashed and rows with missing infos will be completed from rows where the info is available (in case there are multiple information, they will all be present as a list). This is only useful when merging (and hence argument `col`) is multi-columns. The key columns are never filled, even if `fillna=True`.
+    if `join_on_shared_keys=True`, if merging on multi-columns and not the same number of key columns are supplied, the merge will be done on only the shared keys in both dataframes: this is very convenient to allow to groupby in one dataframe according to some keys but not in the other one (eg, one is grouped by name and date so both are kept, while the other one is only grouped by name).
     """
     ### Preparing the input dataframes
     # If the key column is in fact a list of columns (so we will merge on multiple columns), we first extract and rename the id columns for ease
@@ -443,7 +444,20 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                     # other types: we do nothing (the id type is already taken care of at the beginning of the function, the rest is undefined at the moment)
             # Final merge of all columns
             #return df1, df2  # debug: in case of bug, return df1 and df2 and try to do the subsequent commands in a notebook, easiest way to debug
-            dfinal = pd.merge(df1, df2, how='outer', left_on=keycol[0].keys(), right_on=keycol[1].keys(), **kwargs)
+            if len(keycol[0].keys()) == len(keycol[1].keys()):
+                # Merge on multiple columns, we need the same number and types of key columns in both dataframes (but not necessarily same column names)
+                dfinal = pd.merge(df1, df2, how='outer', left_on=keycol[0].keys(), right_on=keycol[1].keys(), **kwargs)
+            elif join_on_shared_keys:
+                # Find all keys that are shared, but try to preserve the order
+                keycol_shared = []
+                for k in keycol[0].keys():
+                    for k2 in keycol[1].keys():
+                        if k == k2:
+                            keycol_shared.append(k)
+                # Merge on shared keys only
+                dfinal = pd.merge(df1, df2, how='outer', on=keycol_shared, **kwargs)
+            else:
+                raise ValueError('To merge two dataframes on multiple keys, you need to provide the same number of keys with the same types (but not necessarily the same names) for both dataframes! Or you can enable join_on_shared_key=True to do a partial merge on the keys that are shared (then it is based on sharing the same column name - the id columns should have the same name internally in any case).')
             # Filling gaps by squashing per subject id and trying to fill the missing fields from another row of the same subject where the information is present
             if fillna:
                 # Drop duplicated columns (probably the 'index_x' and 'index_y' that are produced automatically by a previous pd.merge()), this is necessary else groupby().agg() will fail on dataframes with duplicated columns: https://stackoverflow.com/questions/27719407/pandas-concat-valueerror-shape-of-passed-values-is-blah-indices-imply-blah2
