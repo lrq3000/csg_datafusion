@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.7.2
+# v2.7.3
 #
 
 from __future__ import absolute_import
@@ -835,7 +835,9 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False,
         serrors = 'strict'
     for col in _tqdm(cols, desc='UNICODE', disable=(not progress_bar)):
         # Verify that the column is of type object, else for sure it is not a string
-        if df.loc[:, col].dtype.name != 'object':
+        # also if there are duplicate names, just skip these columns
+        # TODO: try to process columns with duplicate names
+        if (len(df.loc[:, col].shape) > 1 and df.loc[:, col].shape[1] > 1) or df.loc[:, col].dtype.name != 'object':
             continue
         try:
             # First try a decoding by detecting the correct encoding
