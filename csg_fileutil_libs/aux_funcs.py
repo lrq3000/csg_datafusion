@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.7.3
+# v2.7.7
 #
 
 from __future__ import absolute_import
@@ -269,7 +269,8 @@ def cleanup_name(s, encoding=None, normalize=True, clean_nonletters=True):
 # Compute best diagnosis for each patient
 def compute_best_diag(serie, diag_order=None, persubject=True):
     """Convert a serie to a categorical type and extract the best diagnosis for each subject (patient name must be set as index level 0)
-    Note: case insensitive and strip spaces automatically"""
+    Note: case insensitive and strip spaces automatically
+    Set persubject to None if you want to do the max or min yourself (this will return the Series configured with discrete datatype)"""
     if diag_order is None:
         diag_order = ['coma', 'vs/uws', 'mcs', 'mcs-', 'mcs+', 'emcs', 'lis']  # from least to best
     # Convert to lowercase
@@ -290,9 +291,12 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
     if persubject:
         # Return one result per patient
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).max(level=0)
-    else:
+    elif persubject is False:
         # Respect the original keys and return one result for each key (can be multilevel, eg subject + date)
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
+    else:
+        # If None, just return the Serie as-is, and the user can do .max() or .min() or whatever
+		return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True))
 
 def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, fillna_exclude=None, join_on_shared_keys=True, verbose=False, **kwargs):
     """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
@@ -926,9 +930,18 @@ def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False, decode_if_e
 def df_literal_eval(x):
     """Evaluate each string cell of a DataFrame as if it was a Python object, and return the Python object"""
     try:
+		# Try to evaluate using ast
         return(ast.literal_eval(x))
     except (SyntaxError, ValueError):
-        return x
+		try:
+			# Else evaluate as a list without quotes
+			if not (x.startswith('[') and x.endswith(']')):
+				raise Exception()
+			return re.split(',\s*u?', x.translate(None, '[]'))
+			# TODO: implement a real parser using pyparser: https://stackoverflow.com/a/1894785
+		except Exception as exc:
+			# Else simply return the item as-is
+			return x
 
 def df_cols_lower(df_in, col='name'):
     """Find in a DataFrame any column matching the col argument in lowercase and rename all found columns to lowercase"""
@@ -1037,3 +1050,51 @@ def df_subscores_concat(df, cols=None, col_out='subscore'):
     df2[col_out] = df_subscores.apply(lambda x: concat_strings(x, 'S'), axis=1)
     # Return!
     return df2
+
+def df_unify(df, cols, unicol):
+    """Unify multiple columns by recursively filling blanks from the specified list of columns.
+    cols is the list of columns from which to copy (the first will be the most copied, the last the least and only if other columns did not contain any info)
+    unicol is the name of the new unified column"""
+    # Make a copy to avoid side effects
+    df2 = df.copy()
+    # Copy the first column as reference
+    df2[unicol] = df2[cols[0]]
+    # Then each subsequent column will be used to fill the blank parts
+    for col in cols[1:]:
+        df2.loc[df2[unicol].isnull() | (df2[unicol] == ''), unicol] = df2[col]
+    # Return the Dataframe with the new unified column
+    return df2
+
+def df_replace_nonnull(x, repmap, cleanup=False):
+    if cleanup and isinstance(x, str):
+        x = cleanup_name(replace_buggy_accents(x))
+    if x in repmap:
+        replacement = repmap[x]
+        return replacement if replacement is not None else x
+    else:
+        return x
+
+def df_translate(df, col, mapping, cleanup=False, partial=False):
+    """Translate a list of strings on a Dataframe's column
+    This can for example be used to simplify all the values to a reduced set, for more comprehensible graphs or easier data organization
+    If partial=True, if a cell contains the matching pattern, it will be replaced by the target. Use an OrderedDict to take advantage of the sequential order (to make sure that the first pattern is replaced first, then the rest)."""
+    df2 = df.copy()
+    if not partial:
+        # Exact match required
+        df2[col] = df2[col].apply(lambda x: df_replace_nonnull(x, mapping, cleanup=cleanup))
+    else:
+        # Partial match OK
+        for pattern, replacement in mapping.items():
+            df2.loc[df2[col].str.contains(pattern), col] = replacement
+    return df2
+
+def filter_nan_str(x):
+    """Filter 'nan' values as string from a list of strings"""
+    if not isinstance(x, list):
+        return x
+    else:
+        return [y for y in x if y.lower() != 'nan']
+
+def df_filter_nan_str(df_col):
+    """Filter all 'nan' values as strings from a Dataframe column containing lists"""
+    return df_col.apply(df_literal_eval).apply(filter_nan_str).astype('str')
