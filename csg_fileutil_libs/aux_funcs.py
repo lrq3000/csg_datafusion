@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.7.8
+# v2.7.9
 #
 
 from __future__ import absolute_import
@@ -194,6 +194,7 @@ def recwalk(inputpath, sorting=True, folders=False, topdown=True, filetype=None)
     '''Recursively walk through a folder. This provides a mean to flatten out the files restitution (necessary to show a progress bar). This is a generator.'''
     noextflag = False
     if filetype and isinstance(filetype, list):
+        filetype = list(filetype) # make a copy to avoid modifying the input variable (in case it gets reused externally)
         if '' in filetype:  # special case: we accept when there is no extension, then we don't supply to endswith() because it would accept any filetype then, we check this case separately
             noextflag = True
             filetype.remove('')
