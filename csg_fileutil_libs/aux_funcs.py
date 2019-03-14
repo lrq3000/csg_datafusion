@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# Auxiliary functions library for data fusion from reports extractor, dicoms and dicom anonymization, etc
+# Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.7.7
+# v2.7.8
 #
 
 from __future__ import absolute_import
@@ -192,7 +192,11 @@ def fullpath(relpath):
 
 def recwalk(inputpath, sorting=True, folders=False, topdown=True, filetype=None):
     '''Recursively walk through a folder. This provides a mean to flatten out the files restitution (necessary to show a progress bar). This is a generator.'''
+    noextflag = False
     if filetype and isinstance(filetype, list):
+        if '' in filetype:  # special case: we accept when there is no extension, then we don't supply to endswith() because it would accept any filetype then, we check this case separately
+            noextflag = True
+            filetype.remove('')
         filetype = tuple(filetype)  # str.endswith() only accepts a tuple, not a list
     # If it's only a single file, return this single file
     if os.path.isfile(inputpath):
@@ -206,7 +210,7 @@ def recwalk(inputpath, sorting=True, folders=False, topdown=True, filetype=None)
                 dirs.sort()  # sort directories in-place for ordered recursive walking
             # return each file
             for filename in files:
-                if not filetype or filename.endswith(filetype):
+                if not filetype or filename.endswith(filetype) or (noextflag and not '.' in filename):
                     yield (dirpath, filename)  # return directory (full path) and filename
             # return each directory
             if folders:
