@@ -1,11 +1,5 @@
-# errors.py
+# Copyright 2008-2018 pydicom authors. See LICENSE file for details.
 """Module for pydicom exception classes"""
-#
-# Copyright (c) 2013 Darcy Mason
-# This file is part of pydicom, released under a modified MIT license.
-#    See the file license.txt included with this distribution, also
-#    available at https://github.com/darcymason/pydicom
-#
 
 
 class InvalidDicomError(Exception):
@@ -16,9 +10,10 @@ class InvalidDicomError(Exception):
     have this.)
 
     To force reading the file (because maybe it is a dicom file without
-    a header), use read_file(..., force=True).
+    a header), use dcmread(..., force=True).
     """
+
     def __init__(self, *args):
         if not args:
-            args = ('The specified file is not a valid DICOM file.',)
+            args = ('The specified file is not a valid DICOM file.', )
         Exception.__init__(self, *args)

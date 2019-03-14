@@ -1,14 +1,11 @@
-# codify.py
-"""Produce runnable python code which can recreate DICOM objects or files.
+# Copyright 2008-2018 pydicom authors. See LICENSE file for details.
+"""
+Produce runnable python code which can recreate DICOM objects or files.
 
 Can run as a script to produce code for an entire file,
 or import and use specific functions to provide code for pydicom DICOM classes
 
 """
-# Copyright (c) 2013 Darcy Mason
-# This file is part of pydicom, released under an MIT license.
-#    See the file license.txt included with this distribution, also
-#    available at https://github.com/darcymason/pydicom
 
 # Run this from the same directory as a "base" dicom file and
 # this code will output to screen the dicom parameters like:
@@ -18,8 +15,10 @@ or import and use specific functions to provide code for pydicom DICOM classes
 # to create a DICOM file from scratch
 
 import sys
+import os.path
 import pydicom
 from pydicom.datadict import dictionary_keyword
+from pydicom.compat import int_type
 
 import re
 
@@ -31,8 +30,10 @@ line_term = "\n"
 first_cap_re = re.compile('(.)([A-Z][a-z]+)')
 all_cap_re = re.compile('([a-z0-9])([A-Z])')
 
-byte_VRs = ['OB', 'OW', 'OW/OB', 'OW or OB', 'OB or OW',
-            'US or SS or OW', 'US or SS']
+byte_VRs = [
+    'OB', 'OW', 'OW/OB', 'OW or OB', 'OB or OW', 'US or SS or OW', 'US or SS',
+    'OD', 'OL'
+]
 
 
 def camel_to_underscore(name):
@@ -44,8 +45,8 @@ def camel_to_underscore(name):
 
 def tag_repr(tag):
     """String of tag value as (0xgggg, 0xeeee)"""
-    return "(0x{group:04x}, 0x{elem:04x})".format(group=tag.group,
-                                                  elem=tag.element)
+    return "(0x{group:04x}, 0x{elem:04x})".format(
+        group=tag.group, elem=tag.element)
 
 
 def default_name_filter(name):
@@ -70,13 +71,17 @@ def code_imports():
     :return: a string of import statement lines
 
     """
+    line0 = "from __future__ import unicode_literals"
+    line0 += "  # Only for python2.7 and save_as unicode filename"
     line1 = "import pydicom"
     line2 = "from pydicom.dataset import Dataset"
     line3 = "from pydicom.sequence import Sequence"
-    return line_term.join((line1, line2, line3))
+    return line_term.join((line0, line1, line2, line3))
 
 
-def code_dataelem(dataelem, dataset_name="ds", exclude_size=None,
+def code_dataelem(dataelem,
+                  dataset_name="ds",
+                  exclude_size=None,
                   include_private=False):
     """Code lines for a single DICOM data element
 
@@ -104,26 +109,31 @@ def code_dataelem(dataelem, dataset_name="ds", exclude_size=None,
         have_keyword = False
 
     valuerep = repr(dataelem.value)
+
     if exclude_size:
-        if dataelem.VR in byte_VRs and len(dataelem.value) > exclude_size:
-            valuerep = "# XXX Array of %d bytes excluded" % len(dataelem.value)
+        if (dataelem.VR in byte_VRs and
+                len(dataelem.value) > exclude_size):
+            valuerep = (
+                "# XXX Array of %d bytes excluded" % len(dataelem.value))
 
     if have_keyword:
         format_str = "{ds_name}.{keyword} = {valuerep}"
-        line = format_str.format(ds_name=dataset_name,
-                                 keyword=keyword,
-                                 valuerep=valuerep)
+        line = format_str.format(
+            ds_name=dataset_name, keyword=keyword, valuerep=valuerep)
     else:
         format_str = "{ds_name}.add_new({tag}, '{VR}', {valuerep})"
-        line = format_str.format(ds_name=dataset_name,
-                                 tag=tag_repr(dataelem.tag),
-                                 VR=dataelem.VR,
-                                 valuerep=valuerep)
+        line = format_str.format(
+            ds_name=dataset_name,
+            tag=tag_repr(dataelem.tag),
+            VR=dataelem.VR,
+            valuerep=valuerep)
     return line
 
 
-def code_sequence(dataelem, dataset_name="ds",
-                  exclude_size=None, include_private=False,
+def code_sequence(dataelem,
+                  dataset_name="ds",
+                  exclude_size=None,
+                  include_private=False,
                   name_filter=default_name_filter):
     """Code lines for recreating a Sequence data element
 
@@ -189,7 +199,9 @@ def code_sequence(dataelem, dataset_name="ds",
     return line_term.join(lines)
 
 
-def code_dataset(ds, dataset_name="ds", exclude_size=None,
+def code_dataset(ds,
+                 dataset_name="ds",
+                 exclude_size=None,
                  include_private=False):
     """Return python code lines for import statements needed by other code
 
@@ -237,7 +249,7 @@ def code_file(filename, exclude_size=None, include_private=False):
     """
     lines = []
 
-    ds = pydicom.read_file(filename, force=True)
+    ds = pydicom.dcmread(filename, force=True)
 
     # Code a nice header for the python file
     lines.append("# Coded version of DICOM file '{0}'".format(filename))
@@ -249,14 +261,15 @@ def code_file(filename, exclude_size=None, include_private=False):
 
     # Code the file_meta information
     lines.append("# File meta info data elements")
-    code_meta = code_dataset(ds.file_meta, "file_meta", exclude_size, include_private)
+    code_meta = code_dataset(ds.file_meta, "file_meta", exclude_size,
+                             include_private)
     lines.append(code_meta)
     lines.append('')
 
     # Code the main dataset
     lines.append("# Main data elements")
-    code_ds = code_dataset(ds, exclude_size=exclude_size,
-                           include_private=include_private)
+    code_ds = code_dataset(
+        ds, exclude_size=exclude_size, include_private=include_private)
     lines.append(code_ds)
     lines.append('')
 
@@ -269,8 +282,17 @@ def code_file(filename, exclude_size=None, include_private=False):
     return line_term.join(lines)
 
 
-if __name__ == "__main__":
-    default_exclude_size = 100  # bytes
+def main(default_exclude_size, args=None):
+    """Create python code according to user options
+
+    Parameters:
+    -----------
+    default_exclude_size:  int
+        Values longer than this will be coded as a commented syntax error
+
+    args: list
+        Command-line arguments to parse.  If None, then sys.argv is used
+    """
 
     try:
         import argparse
@@ -283,35 +305,64 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Produce python/pydicom code from a DICOM file",
         epilog="Binary data (e.g. pixels) larger than --exclude-size "
-               "(default %d bytes) is not included. A dummy line with a syntax "
-               "error is produced. "
-               "Private data elements are not included "
-               "by default." % default_exclude_size)
-    parser.add_argument('filename',
-                        help="DICOM file from which to produce code lines")
-    parser.add_argument('outfile', nargs='?', type=argparse.FileType('wb'),
-                        help="Filename to write python code to. "
-                        "If not specified, code is written to stdout",
-                        default=sys.stdout)
-    parser.add_argument('-e', '--exclude-size', type=long,
-                        default=default_exclude_size,
-                        help='Exclude binary data larger than specified (bytes)'
-                        '. Default is %d bytes' % default_exclude_size)
-    parser.add_argument('-p', '--include-private', action="store_true",
-                        help='Include private data elements '
-                        '(default is to exclude them)')
-    parser.add_argument('-s', '--save-as',
-                        help="End the code with a ds.save_as(save_filename)")
+        "(default %d bytes) is not included. A dummy line "
+        "with a syntax error is produced. "
+        "Private data elements are not included "
+        "by default." % default_exclude_size)
+    parser.add_argument(
+        'infile', help="DICOM file from which to produce code lines")
+    parser.add_argument(
+        'outfile',
+        nargs='?',
+        type=argparse.FileType('w'),
+        help=("Filename to write python code to. "
+              "If not specified, code is written to stdout"),
+        default=sys.stdout)
+    help_exclude_size = 'Exclude binary data larger than specified (bytes). '
+    help_exclude_size += 'Default is %d bytes' % default_exclude_size
+    parser.add_argument(
+        '-e',
+        '--exclude-size',
+        type=int_type,
+        default=default_exclude_size,
+        help=help_exclude_size)
+    parser.add_argument(
+        '-p',
+        '--include-private',
+        action="store_true",
+        help='Include private data elements '
+        '(default is to exclude them)')
+    parser.add_argument(
+        '-s',
+        '--save-as',
+        help=("Specify the filename for ds.save_as(save_filename); "
+              "otherwise the input name + '_from_codify' will be used"))
 
-    args = parser.parse_args()
+    args = parser.parse_args(args)
+
     # Read the requested file and convert to python/pydicom code lines
-    filename = args.filename
+    filename = args.infile  # name
     code_lines = code_file(filename, args.exclude_size, args.include_private)
 
     # If requested, write a code line to save the dataset
     if args.save_as:
-        save_line = "\nds.save_as('{filename}')".format(filename=args.save_as)
-        code_lines += save_line
+        save_as_filename = args.save_as
+    else:
+        base, ext = os.path.splitext(filename)
+        save_as_filename = base + "_from_codify" + ".dcm"
+    line = "\nds.save_as(r'{filename}', write_like_original=False)"
+    save_line = line.format(filename=save_as_filename)
+    code_lines += save_line
 
     # Write the code lines to specified file or to standard output
+    # For test_util, captured output .name throws error, ignore it:
+    try:
+        if args.outfile.name != "<stdout>":
+            print("Writing code to file '%s'" % args.outfile.name)
+    except AttributeError:
+        pass
     args.outfile.write(code_lines)
+
+
+if __name__ == "__main__":
+    main(default_exclude_size=100)

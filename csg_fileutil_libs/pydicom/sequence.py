@@ -1,11 +1,8 @@
+# Copyright 2008-2018 pydicom authors. See LICENSE file for details.
 """Define the Sequence class, which contains a sequence DataElement's items.
 
 Sequence is a list of pydicom Dataset objects.
 """
-# Copyright (c) 2008-2012 Darcy Mason
-# This file is part of pydicom, released under a modified MIT license.
-#    See the file license.txt included with this distribution, also
-#    available at https://github.com/darcymason/pydicom
 
 from pydicom.dataset import Dataset
 from pydicom.multival import MultiValue
@@ -22,19 +19,21 @@ def validate_dataset(elem):
 class Sequence(MultiValue):
     """Class to hold multiple Datasets in a list.
 
-    This class is derived from MultiValue and as such enforces that all items
-    added to the list are Dataset instances. In order to due this, a validator
-    is substituted for type_constructor when constructing the MultiValue super
-    class
+    This class is derived from MultiValue and as such
+    enforces that all items added to the list are Dataset
+    instances. In order to due this, a validator is
+    substituted for type_constructor when constructing
+    the MultiValue super class
     """
+
     def __init__(self, iterable=None):
         """Initialize a list of Datasets.
 
         Parameters
         ----------
         iterable : list-like of pydicom.dataset.Dataset, optional
-            An iterable object (e.g. list, tuple) containing Datasets. If not
-            used then an empty Sequence is generated.
+            An iterable object (e.g. list, tuple) containing
+            Datasets. If not used then an empty Sequence is generated.
         """
         # We add this extra check to throw a relevant error. Without it, the
         # error will be simply that a Sequence must contain Datasets (since a
@@ -58,6 +57,8 @@ class Sequence(MultiValue):
 
     def __repr__(self):
         """String representation of the Sequence."""
-        formatstr = "<%(classname)s, length %(count)d, at %(id)X>"
-        return formatstr % {'classname': self.__class__.__name__,
-                            'id': id(self), 'count': len(self)}
+        formatstr = "<%(classname)s, length %(count)d>"
+        return formatstr % {
+            'classname': self.__class__.__name__,
+            'count': len(self)
+        }

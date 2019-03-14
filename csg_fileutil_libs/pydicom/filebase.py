@@ -1,64 +1,66 @@
-# filebase.py
+# Copyright 2008-2018 pydicom authors. See LICENSE file for details.
 """Hold DicomFile class, which does basic I/O for a dicom file."""
-# Copyright (c) 2008-2012 Darcy Mason
-# This file is part of pydicom, released under a modified MIT license.
-#    See the file license.txt included with this distribution, also
-#    available at https://github.com/darcymason/pydicom
+
 from __future__ import absolute_import
 
-from pydicom.tag import Tag
-from struct import unpack, pack
+from pydicom.tag import Tag, BaseTag
+from struct import (unpack, pack)
 
 from io import BytesIO
-from pydicom.config import logger
 
 
 class DicomIO(object):
-    """File object which holds transfer syntax info and anything else we need."""
+    """File object which holds transfer syntax info
+       and anything else we need."""
 
-    max_read_attempts = 3  # number of times to read if don't get requested bytes
-    defer_size = None      # default
+    # number of times to read if don't get requested bytes
+    max_read_attempts = 3
+
+    # default
+    defer_size = None
 
     def __init__(self, *args, **kwargs):
-        self._implicit_VR = True   # start with this by default
-
-    def __del__(self):
-        self.close()
+        # start with this by default
+        self._implicit_VR = True
 
     def read_le_tag(self):
-        """Read and return two unsigned shorts (little endian) from the file."""
-        bytes_read = self.read(4)
-        if len(bytes_read) < 4:
-            raise EOFError  # needed for reading "next" tag when at end of file
+        """Read and return two unsigned shorts (little endian)
+           from the file."""
+        bytes_read = self.read(4, need_exact_length=True)
         return unpack(b"<HH", bytes_read)
 
     def read_be_tag(self):
-        """Read and return two unsigned shorts (little endian) from the file."""
-        bytes_read = self.read(4)
-        if len(bytes_read) < 4:
-            raise EOFError  # needed for reading "next" tag when at end of file
+        """Read and return two unsigned shorts (big endian)
+           from the file."""
+        bytes_read = self.read(4, need_exact_length=True)
         return unpack(b">HH", bytes_read)
 
     def write_tag(self, tag):
         """Write a dicom tag (two unsigned shorts) to the file."""
-        tag = Tag(tag)  # make sure is an instance of class, not just a tuple or int
+        # make sure is an instance of class, not just a tuple or int
+        if not isinstance(tag, BaseTag):
+            tag = Tag(tag)
         self.write_US(tag.group)
         self.write_US(tag.element)
 
     def read_leUS(self):
-        """Return an unsigned short from the file with little endian byte order"""
+        """Return an unsigned short from the file
+           with little endian byte order"""
         return unpack(b"<H", self.read(2))[0]
 
     def read_beUS(self):
-        """Return an unsigned short from the file with big endian byte order"""
+        """Return an unsigned short from the file
+           with big endian byte order"""
         return unpack(b">H", self.read(2))[0]
 
     def read_leUL(self):
-        """Return an unsigned long read with little endian byte order"""
+        """Return an unsigned long read with
+           little endian byte order"""
         return unpack(b"<L", self.read(4))[0]
 
-    def read(self, length=None, need_exact_length=True):
-        """Reads the required length, returns EOFError if gets less
+    def read(self, length=None, need_exact_length=False):
+        """Reads the required length, returns
+        EOFError if gets less
 
         If length is None, then read all bytes
         """
@@ -67,15 +69,19 @@ class DicomIO(object):
             return parent_read()  # get all of it
         bytes_read = parent_read(length)
         if len(bytes_read) < length and need_exact_length:
-            # Didn't get all the desired bytes. Keep trying to get the rest. If reading across network, might want to add a delay here
+            # Didn't get all the desired bytes. Keep trying to get the rest.
+            # If reading across network, might want to add a delay here
             attempts = 0
-            while attempts < self.max_read_attempts and len(bytes_read) < length:
+            max_reads = self.max_read_attempts
+            while attempts < max_reads and len(bytes_read) < length:
                 bytes_read += parent_read(length - len(bytes_read))
                 attempts += 1
-            if len(bytes_read) < length:
-                start_pos = self.tell() - len(bytes_read)
-                msg = "Unexpected end of file. "
-                msg += "Read {0} bytes of {1} expected starting at position 0x{2:x}".format(len(bytes_read), length, start_pos)
+            num_bytes = len(bytes_read)
+            if num_bytes < length:
+                start_pos = self.tell() - num_bytes
+                msg = ("Unexpected end of file. Read {0} bytes of {1} "
+                       "expected starting at position 0x{2:x}".format(
+                           len(bytes_read), length, start_pos))
                 raise EOFError(msg)
         return bytes_read
 
@@ -95,15 +101,16 @@ class DicomIO(object):
         """Write an unsigned long with big endian byte order"""
         self.write(pack(b">L", val))
 
-    write_US = write_leUS   # XXX should we default to this?
-    write_UL = write_leUL   # XXX "
+    write_US = write_leUS  # XXX should we default to this?
+    write_UL = write_leUL  # XXX "
 
     def read_beUL(self):
         """Return an unsigned long read with big endian byte order"""
         return unpack(b">L", self.read(4))[0]
 
     # Set up properties is_little_endian and is_implicit_VR
-    # Big/Little Endian changes functions to read unsigned short or long, e.g. length fields etc
+    # Big/Little Endian changes functions to read unsigned
+    # short or long, e.g. length fields etc
     @property
     def is_little_endian(self):
         return self._little_endian
@@ -117,7 +124,7 @@ class DicomIO(object):
             self.write_US = self.write_leUS
             self.write_UL = self.write_leUL
             self.read_tag = self.read_le_tag
-        else:      # Big Endian
+        else:  # Big Endian
             self.read_US = self.read_beUS
             self.read_UL = self.read_beUL
             self.write_US = self.write_beUS
@@ -134,8 +141,8 @@ class DicomIO(object):
 
 
 class DicomFileLike(DicomIO):
-
-    def __init__(self, file_like_obj):
+    def __init__(self, file_like_obj, *args, **kwargs):
+        super(DicomFileLike, self).__init__(*args, **kwargs)
         self.parent = file_like_obj
         self.parent_read = getattr(file_like_obj, "read", self.no_read)
         self.write = getattr(file_like_obj, "write", self.no_write)
@@ -156,10 +163,20 @@ class DicomFileLike(DicomIO):
         """Used for file-like objects where no seek is available"""
         raise IOError("This DicomFileLike object has no seek() method")
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
 
 def DicomFile(*args, **kwargs):
     return DicomFileLike(open(*args, **kwargs))
 
 
-def DicomBytesIO(*args, **kwargs):
-    return DicomFileLike(BytesIO(*args, **kwargs))
+class DicomBytesIO(DicomFileLike):
+    def __init__(self, *args, **kwargs):
+        super(DicomBytesIO, self).__init__(BytesIO(*args, **kwargs))
+
+    def getvalue(self):
+        return self.parent.getvalue()

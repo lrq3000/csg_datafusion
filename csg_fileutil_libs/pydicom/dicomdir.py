@@ -1,11 +1,5 @@
-# dicomdir.py
+# Copyright 2008-2018 pydicom authors. See LICENSE file for details.
 """Module for DicomDir class"""
-#
-# Copyright (c) 2013 Darcy Mason
-# This file is part of pydicom, released under a modified MIT license.
-#    See the file license.txt included with this distribution, also
-#    available at https://github.com/darcymason/pydicom
-#
 
 from pydicom.errors import InvalidDicomError
 from pydicom.dataset import FileDataset
@@ -14,33 +8,52 @@ from pydicom.dataset import FileDataset
 class DicomDir(FileDataset):
     """Hold a DICOMDIR dataset read from file.
 
-    Derived from FileDataset, but additional methods are available,
+    Derived from FileDataset, but additional
+    methods are available,
     specific to the Directory structure
     """
-    def __init__(self, filename_or_obj, dataset, preamble=None, file_meta=None,
-                 is_implicit_VR=True, is_little_endian=True):
-        """Initialize a DICOMDIR dataset read from a DICOM file
-        Carries forward all the initialization from FileDataset class
 
-        :param filename: full path and filename to the file. Use None if is a BytesIO.
-        :param dataset: some form of dictionary, usually a Dataset from read_dataset()
+    def __init__(self,
+                 filename_or_obj,
+                 dataset,
+                 preamble=None,
+                 file_meta=None,
+                 is_implicit_VR=True,
+                 is_little_endian=True):
+        """Initialize a DICOMDIR dataset read from a DICOM file
+        Carries forward all the initialization from
+        FileDataset class
+
+        :param filename_or_obj: full path and filename to the file.
+        Use None if is a BytesIO.
+        :param dataset: some form of dictionary, usually
+                        a Dataset from read_dataset()
         :param preamble: the 128-byte DICOM preamble
-        :param file_meta: the file meta info dataset, as returned by _read_file_meta,
-                or an empty dataset if no file meta information is in the file
-        :param is_implicit_VR: True if implicit VR transfer syntax used; False if explicit VR. Default is True.
-        :param is_little_endian: True if little-endian transfer syntax used; False if big-endian. Default is True.
+        :param file_meta: the file meta info dataset,
+                          as returned by _read_file_meta,
+                          or an empty dataset if no file meta
+                          information is in the file
+        :param is_implicit_VR: True if implicit VR transfer syntax used;
+                               False if explicit VR. Default is True.
+        :param is_little_endian: True if little-endian transfer syntax used;
+                                 False if big-endian. Default is True.
         """
         # Usually this class is created through filereader.read_partial,
         # and it checks class SOP, but in case of direct creation,
         # check here also
         if file_meta:
             class_uid = file_meta.MediaStorageSOPClassUID
-            if not class_uid == "Media Storage Directory Storage":
+            if not class_uid.name == "Media Storage Directory Storage":
                 msg = "SOP Class is not Media Storage Directory (DICOMDIR)"
                 raise InvalidDicomError(msg)
-        FileDataset.__init__(self, filename_or_obj, dataset,
-                             preamble, file_meta,
-                             is_implicit_VR=True, is_little_endian=True)
+        FileDataset.__init__(
+            self,
+            filename_or_obj,
+            dataset,
+            preamble,
+            file_meta,
+            is_implicit_VR=True,
+            is_little_endian=True)
         self.parse_records()
 
     def parse_records(self):
@@ -52,6 +65,7 @@ class DicomDir(FileDataset):
 
         :return: None
         """
+
         # Define a helper function for organizing the records
         def get_siblings(record, map_offset_to_record):
             """Return a list of all siblings of the given directory record,

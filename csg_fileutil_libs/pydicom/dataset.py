@@ -1,3 +1,4 @@
+# Copyright 2008-2018 pydicom authors. See LICENSE file for details.
 """Define the Dataset and FileDataset classes.
 
 The Dataset class represents the DICOM Dataset while the FileDataset class
@@ -13,68 +14,41 @@ Dataset (dict subclass)
         * A Sequence (list subclass), where each item is a Dataset which
             contains its own DataElements, and so on in a recursive manner.
 """
-#
-# Copyright (c) 2008-2013 Darcy Mason
-# This file is part of pydicom, released under a modified MIT license.
-#    See the file license.txt included with this distribution, also
-#    available at https://github.com/darcymason/pydicom
-#
 
 import inspect  # for __dir__
 import io
+import os
 import os.path
-import sys
+from bisect import bisect_left
+from itertools import takewhile
 
-from pydicom import compat
-from pydicom.charset import default_encoding, convert_encodings
-from pydicom.datadict import dictionaryVR
-from pydicom.datadict import tag_for_name, all_names_for_tag
-from pydicom.tag import Tag, BaseTag
-from pydicom.dataelem import DataElement, DataElement_from_raw, RawDataElement
-from pydicom.uid import NotCompressedPixelTransferSyntaxes, UncompressedPixelTransferSyntaxes
-from pydicom.tagtools import tag_in_exception
-import pydicom  # for write_file
+import pydicom  # for dcmwrite
 import pydicom.charset
+import pydicom.config
+from pydicom import compat
+from pydicom._version import __version_info__
+from pydicom.charset import default_encoding, convert_encodings
 from pydicom.config import logger
-import pydicom.encaps
+from pydicom.datadict import dictionary_VR
+from pydicom.datadict import (tag_for_keyword, keyword_for_tag,
+                              repeater_has_keyword)
+from pydicom.dataelem import DataElement, DataElement_from_raw, RawDataElement
+from pydicom.pixel_data_handlers.util import (convert_color_space,
+                                              reshape_pixel_array)
+from pydicom.tag import Tag, BaseTag, tag_in_exception
+from pydicom.uid import (ExplicitVRLittleEndian, ImplicitVRLittleEndian,
+                         ExplicitVRBigEndian, PYDICOM_IMPLEMENTATION_UID)
 
-sys_is_little_endian = (sys.byteorder == 'little')
+if compat.in_py2:
+    from pkgutil import find_loader as have_package
+else:
+    from importlib.util import find_spec as have_package
 
 have_numpy = True
 try:
     import numpy
 except ImportError:
     have_numpy = False
-
-have_gdcm = True
-try:
-    import gdcm
-except ImportError:
-    have_gdcm = False
-
-stat_available = True
-try:
-    from os import stat
-except ImportError:
-    stat_available = False
-have_jpeg_ls = True
-
-try:
-    import jpeg_ls
-except ImportError:
-    have_jpeg_ls = False
-
-have_pillow = True
-try:
-    from PIL import Image as PILImg
-except ImportError:
-    have_pillow = False
-    # If that failed, try the alternate import syntax for PIL.
-    try:
-        import Image as PILImg
-    except ImportError:
-        # Neither worked, so it's likely not installed.
-        have_pillow = False
 
 
 class PropertyError(Exception):
@@ -83,29 +57,34 @@ class PropertyError(Exception):
     pass
 
 
-class Dataset(dict):
-    """A collection (dictionary) of DICOM DataElements.
+class Dataset(object):
+    """Contains a collection (dictionary) of DICOM DataElements.
+    Behaves like a dictionary.
 
     Examples
     --------
-    Add DataElements to the Dataset (for elements in the DICOM dictionary).
+    Add DataElements to the Dataset (for elements in the DICOM dictionary):
+
     >>> ds = Dataset()
     >>> ds.PatientName = "CITIZEN^Joan"
     >>> ds.add_new(0x00100020, 'LO', '12345')
     >>> ds[0x0010, 0x0030] = DataElement(0x00100030, 'DA', '20010101')
 
-    Add Sequence DataElement to the Dataset
+    Add Sequence DataElement to the Dataset:
+
     >>> ds.BeamSequence = [Dataset(), Dataset(), Dataset()]
     >>> ds.BeamSequence[0].Manufacturer = "Linac, co."
     >>> ds.BeamSequence[1].Manufacturer = "Linac and Sons, co."
     >>> ds.BeamSequence[2].Manufacturer = "Linac and Daughters, co."
 
-    Add private DataElements to the Dataset
+    Add private DataElements to the Dataset:
+
     >>> ds.add(DataElement(0x0043102b, 'SS', [4, 4, 0, 0]))
     >>> ds.add_new(0x0043102b, 'SS', [4, 4, 0, 0])
     >>> ds[0x0043, 0x102b] = DataElement(0x0043102b, 'SS', [4, 4, 0, 0])
 
-    Updating and retrieving DataElement values
+    Updating and retrieving DataElement values:
+
     >>> ds.PatientName = "CITIZEN^Joan"
     >>> ds.PatientName
     'CITIZEN^Joan"
@@ -113,45 +92,55 @@ class Dataset(dict):
     >>> ds.PatientName
     'CITIZEN^John'
 
-    Retrieving a DataElement's value from a Sequence
+    Retrieving a DataElement's value from a Sequence:
+
     >>> ds.BeamSequence[0].Manufacturer
     'Linac, co.'
     >>> ds.BeamSequence[1].Manufacturer
     'Linac and Sons, co.'
 
-    Retrieving DataElements
+    Retrieving DataElements:
+
     >>> elem = ds[0x00100010]
+    >>> elem
+    (0010, 0010) Patient's Name                      PN: 'CITIZEN^Joan'
     >>> elem = ds.data_element('PatientName')
     >>> elem
     (0010, 0010) Patient's Name                      PN: 'CITIZEN^Joan'
 
-    Deleting a DataElement from the Dataset
+    Deleting a DataElement from the Dataset:
+
     >>> del ds.PatientID
     >>> del ds.BeamSequence[1].Manufacturer
     >>> del ds.BeamSequence[2]
 
-    Deleting a private DataElement from the Dataset
+    Deleting a private DataElement from the Dataset:
+
     >>> del ds[0x0043, 0x102b]
 
-    Determining if a DataElement is present in the Dataset
+    Determining if a DataElement is present in the Dataset:
+
     >>> 'PatientName' in ds
     True
     >>> 'PatientID' in ds
     False
-    >>> 0x00100030 in ds
+    >>> (0x0010, 0x0030) in ds
     True
     >>> 'Manufacturer' in ds.BeamSequence[0]
     True
 
-    Iterating through the top level of a Dataset only (excluding Sequences)
+    Iterating through the top level of a Dataset only (excluding Sequences):
+
     >>> for elem in ds:
     >>>    print(elem)
 
-    Iterating through the entire Dataset (including Sequences)
+    Iterating through the entire Dataset (including Sequences):
+
     >>> for elem in ds.iterall():
     >>>     print(elem)
 
-    Recursively iterate through a Dataset (including Sequences)
+    Recursively iterate through a Dataset (including Sequences):
+
     >>> def recurse(ds):
     >>>     for elem in ds:
     >>>         if elem.VR == 'SQ':
@@ -168,16 +157,45 @@ class Dataset(dict):
     indent_chars : str
         For string display, the characters used to indent nested Sequences.
         Default is "   ".
+    is_little_endian : bool
+        Shall be set before writing with `write_like_original=False`.
+        The written dataset (excluding the pixel data) will be written using
+        the given endianess.
+    is_implicit_VR : bool
+        Shall be set before writing with `write_like_original=False`.
+        The written dataset will be written using the transfer syntax with
+        the given VR handling, e.g LittleEndianImplicit if True,
+        and LittleEndianExplicit or BigEndianExplicit (depending on
+        `is_little_endian`) if False.
     """
     indent_chars = "   "
 
-    # Python 2: Classes which define __eq__ should flag themselves as unhashable
+    # Python 2: Classes defining __eq__ should flag themselves as unhashable
     __hash__ = None
 
     def __init__(self, *args, **kwargs):
         """Create a new Dataset instance."""
         self._parent_encoding = kwargs.get('parent_encoding', default_encoding)
-        dict.__init__(self, *args)
+        if not args:
+            self._dict = {}
+        elif isinstance(args[0], Dataset):
+            self._dict = args[0]._dict
+        else:
+            self._dict = args[0]
+        self.is_decompressed = False
+
+        # the following read_XXX attributes are used internally to store
+        # the properties of the dataset after read from a file
+
+        # set depending on the endianess of the read dataset
+        self.read_little_endian = None
+        # set depending on the VR handling of the read dataset
+        self.read_implicit_vr = None
+        # set to the encoding the dataset had originally
+        self.read_encoding = None
+
+        self.is_little_endian = None
+        self.is_implicit_VR = None
 
     def __enter__(self):
         """Method invoked on entry to a with statement."""
@@ -185,6 +203,7 @@ class Dataset(dict):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Method invoked on exit from a with statement."""
+        # Returning False will re-raise any exceptions that occur
         return False
 
     def add(self, data_element):
@@ -220,7 +239,7 @@ class Dataset(dict):
         """
         data_element = DataElement(tag, VR, value)
         # use data_element.tag since DataElement verified it
-        self[data_element.tag] = data_element
+        self._dict[data_element.tag] = data_element
 
     def data_element(self, name):
         """Return the DataElement corresponding to the element keyword `name`.
@@ -236,13 +255,14 @@ class Dataset(dict):
             For the given DICOM element `keyword`, return the corresponding
             Dataset DataElement if present, None otherwise.
         """
-        tag = tag_for_name(name)
-        if tag:
+        tag = tag_for_keyword(name)
+        # Test against None as (0000,0000) is a possible tag
+        if tag is not None:
             return self[tag]
         return None
 
     def __contains__(self, name):
-        """Extend dict.__contains__() to handle DICOM keywords.
+        """Simulate dict.__contains__() to handle DICOM keywords.
 
         This is called for code like:
         >>> 'SliceLocation' in ds
@@ -259,16 +279,17 @@ class Dataset(dict):
             True if the DataElement is in the Dataset, False otherwise.
         """
         if isinstance(name, (str, compat.text_type)):
-            tag = tag_for_name(name)
+            tag = tag_for_keyword(name)
         else:
             try:
                 tag = Tag(name)
-            except:
+            except Exception:
                 return False
-        if tag:
-            return dict.__contains__(self, tag)
+        # Test against None as (0000,0000) is a possible tag
+        if tag is not None:
+            return tag in self._dict
         else:
-            return dict.__contains__(self, name)  # will no doubt raise an exception
+            return name in self._dict  # will no doubt raise an exception
 
     def decode(self):
         """Apply character set decoding to all DataElements in the Dataset.
@@ -288,6 +309,7 @@ class Dataset(dict):
             """Callback to decode `data_element`."""
             if data_element.VR == 'SQ':
                 for dset in data_element.value:
+                    dset._parent_encoding = dicom_character_set
                     dset.decode()
             else:
                 decode_data_element(data_element, dicom_character_set)
@@ -310,9 +332,9 @@ class Dataset(dict):
             The keyword for the DICOM element or the class attribute to delete.
         """
         # First check if a valid DICOM keyword and if we have that data element
-        tag = tag_for_name(name)
-        if tag is not None and tag in self:
-            dict.__delitem__(self, tag)  # direct to dict as we know we have key
+        tag = tag_for_keyword(name)
+        if tag is not None and tag in self._dict:
+            del self._dict[tag]
         # If not a DICOM name in this dataset, check for regular instance name
         #   can't do delete directly, that will call __delattr__ again
         elif name in self.__dict__:
@@ -324,20 +346,43 @@ class Dataset(dict):
     def __delitem__(self, key):
         """Intercept requests to delete an attribute by key.
 
-        >>> del ds[0x00100010]
+        Examples
+        --------
+        Indexing using DataElement tag
+        >>> ds = Dataset()
+        >>> ds.CommandGroupLength = 100
+        >>> ds.PatientName = 'CITIZEN^Jan'
+        >>> del ds[0x00000000]
+        >>> ds
+        (0010, 0010) Patient's Name                      PN: 'CITIZEN^Jan'
+
+        Slicing using DataElement tag
+        >>> ds = Dataset()
+        >>> ds.CommandGroupLength = 100
+        >>> ds.SOPInstanceUID = '1.2.3'
+        >>> ds.PatientName = 'CITIZEN^Jan'
+        >>> del ds[:0x00100000]
+        >>> ds
+        (0010, 0010) Patient's Name                      PN: 'CITIZEN^Jan'
 
         Parameters
         ----------
         key
-            The key for the attribute to be deleted.
+            The key for the attribute to be deleted. If a slice is used then
+            the tags matching the slice conditions will be deleted.
         """
-        # Assume is a standard tag (for speed in common case)
-        try:
-            dict.__delitem__(self, key)
-        # If not a standard tag, than convert to Tag and try again
-        except KeyError:
-            tag = Tag(key)
-            dict.__delitem__(self, tag)
+        # If passed a slice, delete the corresponding DataElements
+        if isinstance(key, slice):
+            for tag in self._slice_dataset(key.start, key.stop, key.step):
+                del self._dict[tag]
+        else:
+            # Assume is a standard tag (for speed in common case)
+            try:
+                del self._dict[key]
+            # If not a standard tag, than convert to Tag and try again
+            except KeyError:
+                tag = Tag(key)
+                del self._dict[tag]
 
     def __dir__(self):
         """Give a list of attributes available in the Dataset.
@@ -348,9 +393,9 @@ class Dataset(dict):
         # Force zip object into a list in case of python3. Also backwards
         # compatible
         meths = set(list(zip(
-                    *inspect.getmembers(Dataset, inspect.isroutine)))[0])
+            *inspect.getmembers(self.__class__, inspect.isroutine)))[0])
         props = set(list(zip(
-                    *inspect.getmembers(Dataset, inspect.isdatadescriptor)))[0])
+            *inspect.getmembers(self.__class__, inspect.isdatadescriptor)))[0])
         dicom_names = set(self.dir())
         alldir = sorted(props | meths | dicom_names)
         return alldir
@@ -374,9 +419,7 @@ class Dataset(dict):
             The matching DataElement keywords in the dataset. If no filters are
             used then all DataElement keywords are returned.
         """
-        allnames = []
-        for tag, data_element in self.items():
-            allnames.extend(all_names_for_tag(tag))
+        allnames = [keyword_for_tag(tag) for tag in self._dict.keys()]
         # remove blanks - tags without valid names (e.g. private tags)
         allnames = [x for x in allnames if x]
         # Store found names in a dict, so duplicate names appear only once
@@ -407,16 +450,18 @@ class Dataset(dict):
             return True
 
         if isinstance(other, self.__class__):
-            # Compare Elements using values() and class variables using __dict__
+            # Compare Elements using values()
             # Convert values() to a list for compatibility between
             #   python 2 and 3
-            return (list(self.values()) == list(other.values()) and
-                    self.__dict__ == other.__dict__)
+            # Sort values() by element tag
+            self_elem = sorted(list(self._dict.values()), key=lambda x: x.tag)
+            other_elem = sorted(list(other._dict.values()), key=lambda x: x.tag)
+            return self_elem == other_elem
 
         return NotImplemented
 
     def get(self, key, default=None):
-        """Extend dict.get() to handle DICOM DataElement keywords.
+        """Simulate dict.get() to handle DICOM DataElement tags and keywords.
 
         Parameters
         ----------
@@ -429,8 +474,8 @@ class Dataset(dict):
         Returns
         -------
         value
-            If `key` is the keyword for a DataElement in the Dataset then return
-            the DataElement's value.
+            If `key` is the keyword for a DataElement in the Dataset then
+            return the DataElement's value.
         pydicom.dataelem.DataElement
             If `key` is a tag for a DataElement in the Dataset then return the
             DataElement instance.
@@ -448,18 +493,45 @@ class Dataset(dict):
             if not isinstance(key, BaseTag):
                 try:
                     key = Tag(key)
-                except:
+                except Exception:
                     raise TypeError("Dataset.get key must be a string or tag")
         try:
-            return_val = self.__getitem__(key)
+            return self.__getitem__(key)
         except KeyError:
-            return_val = default
-        return return_val
+            return default
+
+    def items(self):
+        """Return the elements in the Dataset as a list of tuple.
+
+        Returns
+        -------
+        list of tuple
+            The top-level (element tag, element) for the Dataset.
+        """
+        return self._dict.items()
+
+    def keys(self):
+        """Return the DICOM tag keys to simulate dict."""
+        return self._dict.keys()
+
+    def values(self):
+        """Return the DICOM tag values to simulate dict."""
+        return self._dict.values()
+
+    if compat.in_py2:
+        def iterkeys(self):
+            return self._dict.iterkeys()
+
+        def itervalues(self):
+            return self._dict.itervalues()
+
+        def iteritems(self):
+            return self._dict.iteritems()
 
     def __getattr__(self, name):
-        """Intercept requests for unknown Dataset attribute names.
+        """Intercept requests for Dataset attribute names.
 
-        If the name matches a DICOM keyword, return the value for the
+        If `name` matches a DICOM keyword, return the value for the
         DataElement with the corresponding tag.
 
         Parameters
@@ -470,25 +542,25 @@ class Dataset(dict):
         Returns
         -------
         value
-            The corresponding DataElement's value.
+              If `name` matches a DICOM keyword, returns the corresponding
+              DataElement's value. Otherwise returns the class attribute's
+              value (if present).
         """
-        # __getattr__ only called if instance cannot find name in self.__dict__
-        # So, if name is not a dicom string, then is an error
-        tag = tag_for_name(name)
-        if tag is None:
-            raise AttributeError("Dataset does not have attribute "
-                                 "'{0:s}'.".format(name))
+        tag = tag_for_keyword(name)
+        if tag is None:  # `name` isn't a DICOM element keyword
+            # Try the base class attribute getter (fix for issue 332)
+            return super(Dataset, self).__getattribute__(name)
         tag = Tag(tag)
-        if tag not in self:
-            raise AttributeError("Dataset does not have attribute "
-                                 "'{0:s}'.".format(name))
-        else:  # do have that dicom data_element
+        if tag not in self._dict:  # DICOM DataElement not in the Dataset
+            # Try the base class attribute getter (fix for issue 332)
+            return super(Dataset, self).__getattribute__(name)
+        else:
             return self[tag].value
 
     @property
     def _character_set(self):
         """The Dataset's SpecificCharacterSet value (if present)."""
-        char_set = self.get('SpecificCharacterSet', None)
+        char_set = self.get(BaseTag(0x00080005), None)
 
         if not char_set:
             char_set = self._parent_encoding
@@ -503,19 +575,49 @@ class Dataset(dict):
         Any deferred data elements will be read in and an attempt will be made
         to correct any elements with ambiguous VRs.
 
+        Examples
+        --------
+        Indexing using DataElement tag
+        >>> ds = Dataset()
+        >>> ds.SOPInstanceUID = '1.2.3'
+        >>> ds.PatientName = 'CITIZEN^Jan'
+        >>> ds.PatientID = '12345'
+        >>> ds[0x00100010]
+        'CITIZEN^Jan'
+
+        Slicing using DataElement tag
+        All group 0x0010 elements in the dataset
+        >>> ds[0x00100000:0x0011000]
+        (0010, 0010) Patient's Name                      PN: 'CITIZEN^Jan'
+        (0010, 0020) Patient ID                          LO: '12345'
+
+        All group 0x0002 elements in the dataset
+        >>> ds[(0x0002, 0x0000):(0x0003, 0x0000)]
+
         Parameters
         ----------
         key
             The DICOM (group, element) tag in any form accepted by
             pydicom.tag.Tag such as [0x0010, 0x0010], (0x10, 0x10), 0x00100010,
-            etc.
+            etc. May also be a slice made up of DICOM tags.
 
         Returns
         -------
-        pydicom.dataelem.DataElement
+        pydicom.dataelem.DataElement or pydicom.dataset.Dataset
+            If a single DICOM element tag is used then returns the
+            corresponding DataElement. If a slice is used then returns a
+            Dataset object containing the corresponding DataElements.
         """
-        tag = Tag(key)
-        data_elem = dict.__getitem__(self, tag)
+        # If passed a slice, return a Dataset containing the corresponding
+        #   DataElements
+        if isinstance(key, slice):
+            return self._dataset_slice(key)
+
+        if isinstance(key, BaseTag):
+            tag = key
+        else:
+            tag = Tag(key)
+        data_elem = self._dict[tag]
 
         if isinstance(data_elem, DataElement):
             return data_elem
@@ -523,13 +625,12 @@ class Dataset(dict):
             # If a deferred read, then go get the value now
             if data_elem.value is None:
                 from pydicom.filereader import read_deferred_data_element
-                data_elem = read_deferred_data_element(self.fileobj_type,
-                                                       self.filename,
-                                                       self.timestamp,
-                                                       data_elem)
+                data_elem = read_deferred_data_element(
+                    self.fileobj_type, self.filename, self.timestamp,
+                    data_elem)
 
-            if tag != (0x08, 0x05):
-                character_set = self._character_set
+            if tag != BaseTag(0x00080005):
+                character_set = self.read_encoding or self._character_set
             else:
                 character_set = default_encoding
             # Not converted from raw form read from file yet; do so now
@@ -538,10 +639,10 @@ class Dataset(dict):
             # If the Element has an ambiguous VR, try to correct it
             if 'or' in self[tag].VR:
                 from pydicom.filewriter import correct_ambiguous_vr_element
-                self[tag] = correct_ambiguous_vr_element(self[tag], self,
-                                                         data_elem[6])
+                self[tag] = correct_ambiguous_vr_element(
+                    self[tag], self, data_elem[6])
 
-        return dict.__getitem__(self, tag)
+        return self._dict.get(tag)
 
     def get_item(self, key):
         """Return the raw data element if possible.
@@ -555,18 +656,62 @@ class Dataset(dict):
         key
             The DICOM (group, element) tag in any form accepted by
             pydicom.tag.Tag such as [0x0010, 0x0010], (0x10, 0x10), 0x00100010,
-            etc.
+            etc. May also be a slice made up of DICOM tags.
 
         Returns
         -------
         pydicom.dataelem.DataElement
         """
-        tag = Tag(key)
-        data_elem = dict.__getitem__(self, tag)
+        if isinstance(key, slice):
+            return self._dataset_slice(key)
+
+        if isinstance(key, BaseTag):
+            tag = key
+        else:
+            tag = Tag(key)
+        data_elem = self._dict.get(tag)
         # If a deferred read, return using __getitem__ to read and convert it
         if isinstance(data_elem, tuple) and data_elem.value is None:
             return self[key]
         return data_elem
+
+    def _dataset_slice(self, slice):
+        """Return a slice that has the same properties as the original
+        dataset. That includes properties related to endianess and VR handling,
+        and the specific character set. No element conversion is done, e.g.
+        elements of type RawDataElement are kept.
+        """
+        tags = self._slice_dataset(slice.start, slice.stop, slice.step)
+        dataset = Dataset({tag: self.get_item(tag) for tag in tags})
+        dataset.is_little_endian = self.is_little_endian
+        dataset.is_implicit_VR = self.is_implicit_VR
+        dataset.set_original_encoding(self.read_implicit_vr,
+                                      self.read_little_endian,
+                                      self.read_encoding)
+        return dataset
+
+    @property
+    def is_original_encoding(self):
+        """Return True if the properties to be used for writing are set and
+        have the same value as the ones in the dataset after reading it.
+        This includes properties related to endianess, VR handling and the
+        specific character set.
+        """
+        return (self.is_implicit_VR is not None and
+                self.is_little_endian is not None and
+                self.read_implicit_vr == self.is_implicit_VR and
+                self.read_little_endian == self.is_little_endian and
+                self.read_encoding == self._character_set)
+
+    def set_original_encoding(self, is_implicit_vr, is_little_endian,
+                              character_encoding):
+        """Set the values for the original transfer syntax and encoding.
+        Can be used for a dataset with raw data elements to enable
+        optimized writing (e.g. without decoding the data elements).
+        """
+        self.read_implicit_vr = is_implicit_vr
+        self.read_little_endian = is_little_endian
+        self.read_encoding = character_encoding
 
     def group_dataset(self, group):
         """Return a Dataset containing only DataElements of a certain group.
@@ -574,17 +719,14 @@ class Dataset(dict):
         Parameters
         ----------
         group : int
-            The group part of a dicom (group, element) tag.
+            The group part of a DICOM (group, element) tag.
 
         Returns
         -------
         pydicom.dataset.Dataset
             A dataset instance containing elements of the group specified.
         """
-        ds = Dataset()
-        ds.update(dict([(tag, data_element) for tag, data_element in self.items()
-                        if tag.group == group]))
-        return ds
+        return self[(group, 0x0000):(group + 1, 0x0000)]
 
     def __iter__(self):
         """Iterate through the top-level of the Dataset, yielding DataElements.
@@ -604,361 +746,60 @@ class Dataset(dict):
         # Note this is different than the underlying dict class,
         #        which returns the key of the key:value mapping.
         #   Here the value is returned (but data_element.tag has the key)
-        taglist = sorted(self.keys())
+        taglist = sorted(self._dict.keys())
         for tag in taglist:
             yield self[tag]
 
-    def _is_uncompressed_transfer_syntax(self):
-        """Return True if the TransferSyntaxUID is a compressed syntax."""
-        # FIXME uses file_meta here, should really only be thus for FileDataset
-        return self.file_meta.TransferSyntaxUID in NotCompressedPixelTransferSyntaxes
+    def elements(self):
+        """Iterate through the top-level of the Dataset, yielding DataElements
+        or RawDataElements (no conversion done).
+
+        >>> for elem in ds.elements():
+        >>>     print(elem)
+
+        The elements are returned in the same way as in __getitem__.
+
+        Yields
+        ------
+        pydicom.dataelem.DataElement or pydicom.dataelem.RawDataElement
+            The Dataset's DataElements, sorted by increasing tag order.
+        """
+        taglist = sorted(self._dict.keys())
+        for tag in taglist:
+            yield self.get_item(tag)
+
+    def __len__(self):
+        return len(self._dict)
 
     def __ne__(self, other):
         """Compare `self` and `other` for inequality."""
-        return not (self == other)
+        return not self == other
 
-    def _pixel_data_numpy(self):
-        """If NumPy is available, return an ndarray of the Pixel Data.
+    def clear(self):
+        """Delete all data elements."""
+        self._dict.clear()
 
-        Falls back to GDCM in case of unsupported transfer syntaxes.
+    def pop(self, *args, **kwargs):
+        return self._dict.pop(*args, **kwargs)
 
-        Raises
-        ------
-        TypeError
-            If there is no Pixel Data or not a supported data type.
-        ImportError
-            If NumPy isn't found, or in the case of fallback, if GDCM isn't
-            found.
+    def popitem(self):
+        return self._dict.popitem()
 
-        Returns
-        -------
-        numpy.ndarray
-            The contents of the Pixel Data element (7FE0,0010) as an ndarray.
-        """
-        if not self._is_uncompressed_transfer_syntax():
-            if not have_gdcm:
-                raise NotImplementedError("Pixel Data is compressed in a "
-                                          "format pydicom does not yet handle. "
-                                          "Cannot return array. Pydicom might "
-                                          "be able to convert the pixel data "
-                                          "using GDCM if it is installed.")
-            elif not self.filename:
-                raise NotImplementedError("GDCM is only supported when the "
-                                          "dataset has been created with a "
-                                          "filename.")
-        if not have_numpy:
-            msg = "The Numpy package is required to use pixel_array, and " \
-                  "numpy could not be imported."
-            raise ImportError(msg)
-        if 'PixelData' not in self:
-            raise TypeError("No pixel data found in this dataset.")
+    def setdefault(self,  *args, **kwargs):
+        return self._dict.setdefault(*args, **kwargs)
 
-        # There are two cases:
-        # 1) uncompressed PixelData -> use numpy
-        # 2) compressed PixelData, filename is available and GDCM is
-        #    available -> use GDCM
-        if self._is_uncompressed_transfer_syntax():
-            # Make NumPy format code, e.g. "uint16", "int32" etc
-            # from two pieces of info:
-            #    self.PixelRepresentation -- 0 for unsigned, 1 for signed;
-            #    self.BitsAllocated -- 8, 16, or 32
-            format_str = '%sint%d' % (('u', '')[self.PixelRepresentation],
-                                      self.BitsAllocated)
-            try:
-                numpy_dtype = numpy.dtype(format_str)
-            except TypeError:
-                msg = ("Data type not understood by NumPy: "
-                       "format='%s', PixelRepresentation=%d, BitsAllocated=%d")
-                raise TypeError(msg % (format_str, self.PixelRepresentation,
-                                       self.BitsAllocated))
-
-            if self.is_little_endian != sys_is_little_endian:
-                numpy_dtype = numpy_dtype.newbyteorder('S')
-
-            pixel_bytearray = self.PixelData
-        elif have_gdcm and self.filename:
-            # read the file using GDCM
-            # FIXME this should just use self.PixelData instead of self.filename
-            #       but it is unclear how this should be achieved using GDCM
-            gdcm_image_reader = gdcm.ImageReader()
-            gdcm_image_reader.SetFileName(self.filename)
-            if not gdcm_image_reader.Read():
-                raise TypeError("GDCM could not read DICOM image")
-            gdcm_image = gdcm_image_reader.GetImage()
-
-            # determine the correct numpy datatype
-            gdcm_numpy_typemap = {
-                gdcm.PixelFormat.INT8:     numpy.int8,
-                gdcm.PixelFormat.UINT8:    numpy.uint8,
-                gdcm.PixelFormat.UINT16:   numpy.uint16,
-                gdcm.PixelFormat.INT16:    numpy.int16,
-                gdcm.PixelFormat.UINT32:   numpy.uint32,
-                gdcm.PixelFormat.INT32:    numpy.int32,
-                gdcm.PixelFormat.FLOAT32:  numpy.float32,
-                gdcm.PixelFormat.FLOAT64:  numpy.float64
-            }
-            gdcm_pixel_format = gdcm_image.GetPixelFormat().GetScalarType()
-            if gdcm_pixel_format in gdcm_numpy_typemap:
-                numpy_dtype = gdcm_numpy_typemap[gdcm_pixel_format]
-            else:
-                raise TypeError('{0} is not a GDCM supported '
-                                'pixel format'.format(gdcm_pixel_format))
-
-            # GDCM returns char* as type str. Under Python 2 `str` are
-            # byte arrays by default. Python 3 decodes this to
-            # unicode strings by default.
-            # The SWIG docs mention that they always decode byte streams
-            # as utf-8 strings for Python 3, with the `surrogateescape`
-            # error handler configured.
-            # Therefore, we can encode them back to their original bytearray
-            # representation on Python 3 by using the same parameters.
-            pixel_bytearray = gdcm_image.GetBuffer()
-            if sys.version_info >= (3, 0):
-                pixel_bytearray = pixel_bytearray.encode("utf-8",
-                                                         "surrogateescape")
-
-            # if GDCM indicates that a byte swap is in order, make
-            #   sure to inform numpy as well
-            if gdcm_image.GetNeedByteSwap():
-                numpy_dtype = numpy_dtype.newbyteorder('S')
-
-            # Here we need to be careful because in some cases, GDCM reads a
-            # buffer that is too large, so we need to make sure we only include
-            # the first n_rows * n_columns * dtype_size bytes.
-
-            n_bytes = self.Rows * self.Columns * numpy.dtype(numpy_dtype).itemsize
-
-            if len(pixel_bytearray) > n_bytes:
-
-                # We make sure that all the bytes after are in fact zeros
-                padding = pixel_bytearray[n_bytes:]
-                if numpy.any(numpy.fromstring(padding, numpy.byte)):
-                    pixel_bytearray = pixel_bytearray[:n_bytes]
-                else:
-                    # We revert to the old behavior which should then result
-                    #   in a Numpy error later on.
-                    pass
-
-        pixel_array = numpy.fromstring(pixel_bytearray, dtype=numpy_dtype)
-
-        # Note the following reshape operations return a new *view* onto
-        #   pixel_array, but don't copy the data
-        if 'NumberOfFrames' in self and self.NumberOfFrames > 1:
-            if self.SamplesPerPixel > 1:
-                # TODO: Handle Planar Configuration attribute
-                assert self.PlanarConfiguration == 0
-                pixel_array = pixel_array.reshape(self.NumberOfFrames,
-                                                  self.Rows, self.Columns,
-                                                  self.SamplesPerPixel)
-            else:
-                pixel_array = pixel_array.reshape(self.NumberOfFrames,
-                                                  self.Rows, self.Columns)
-        else:
-            if self.SamplesPerPixel > 1:
-                if self.BitsAllocated == 8:
-                    if self.PlanarConfiguration == 0:
-                        pixel_array = pixel_array.reshape(self.Rows,
-                                                          self.Columns,
-                                                          self.SamplesPerPixel)
-                    else:
-                        pixel_array = pixel_array.reshape(self.SamplesPerPixel,
-                                                          self.Rows,
-                                                          self.Columns)
-                        pixel_array = pixel_array.transpose(1, 2, 0)
-                else:
-                    raise NotImplementedError("This code only handles "
-                                              "SamplesPerPixel > 1 if Bits "
-                                              "Allocated = 8")
-            else:
-                pixel_array = pixel_array.reshape(self.Rows, self.Columns)
-        return pixel_array
-
-    def _compressed_pixel_data_numpy(self):
-        """Return a NumPy array of the Pixel Data.
-
-        NumPy is a numerical package for python. It is used if available.
+    def convert_pixel_data(self):
+        """Convert the Pixel Data to a numpy array internally.
 
         Returns
         -------
-        numpy.ndarray
-            The Pixel Data as an array.
+        None
+            Converted pixel data is stored internally in the dataset.
 
-        Raises
-        ------
-        TypeError
-            If no Pixel Data element in the dataset.
-        ImportError
-            If cannot import numpy.
-        """
-        if 'PixelData' not in self:
-            raise TypeError("No pixel data found in this dataset.")
-
-        if not have_numpy:
-            msg = "The Numpy package is required to use pixel_array, and " \
-                  "numpy could not be imported."
-            raise ImportError(msg)
-
-        # determine the type used for the array
-        need_byteswap = (self.is_little_endian != sys_is_little_endian)
-
-        # Make NumPy format code, e.g. "uint16", "int32" etc
-        # from two pieces of info:
-        #    self.PixelRepresentation -- 0 for unsigned, 1 for signed;
-        #    self.BitsAllocated -- 8, 16, or 32
-        format_str = '%sint%d' % (('u', '')[self.PixelRepresentation],
-                                  self.BitsAllocated)
-        try:
-            numpy_format = numpy.dtype(format_str)
-        except TypeError:
-            msg = ("Data type not understood by NumPy: "
-                   "format='%s', PixelRepresentation=%d, BitsAllocated=%d")
-            raise TypeError(msg % (format_str, self.PixelRepresentation,
-                                   self.BitsAllocated))
-        if self.file_meta.TransferSyntaxUID in pydicom.uid.PILSupportedCompressedPixelTransferSyntaxes:
-            UncompressedPixelData = self._get_PIL_supported_compressed_pixeldata()
-        elif self.file_meta.TransferSyntaxUID in pydicom.uid.JPEGLSSupportedCompressedPixelTransferSyntaxes:
-            UncompressedPixelData = self._get_jpeg_ls_supported_compressed_pixeldata()
-        else:
-            msg = "The transfer syntax {0} is not currently supported.".format(self.file_meta.TransferSyntaxUID)
-            raise NotImplementedError(msg)
-
-        # Have correct Numpy format, so create the NumPy array
-        arr = numpy.fromstring(UncompressedPixelData, numpy_format)
-
-        # XXX byte swap - may later handle this in read_file!!?
-        if need_byteswap:
-            arr.byteswap(True)  # True means swap in-place, don't make a new copy
-        # Note the following reshape operations return a new *view* onto arr, but don't copy the data
-        if 'NumberOfFrames' in self and self.NumberOfFrames > 1:
-            if self.SamplesPerPixel > 1:
-                arr = arr.reshape(self.NumberOfFrames, self.Rows, self.Columns,
-                                  self.SamplesPerPixel)
-            else:
-                arr = arr.reshape(self.NumberOfFrames, self.Rows, self.Columns)
-        else:
-            if self.SamplesPerPixel > 1:
-                if self.BitsAllocated == 8:
-                    if self.PlanarConfiguration == 0:
-                        arr = arr.reshape(self.Rows, self.Columns,
-                                          self.SamplesPerPixel)
-                    else:
-                        arr = arr.reshape(self.SamplesPerPixel, self.Rows,
-                                          self.Columns)
-                        arr = arr.transpose(1, 2, 0)
-                else:
-                    raise NotImplementedError("This code only handles "
-                                              "SamplesPerPixel > 1 if Bits "
-                                              "Allocated = 8")
-            else:
-                arr = arr.reshape(self.Rows, self.Columns)
-        if (self.file_meta.TransferSyntaxUID in pydicom.uid.JPEG2000CompressedPixelTransferSyntaxes and self.BitsStored == 16):
-            # WHY IS THIS EVEN NECESSARY??
-            arr &= 0x7FFF
-        return arr
-
-    def _get_PIL_supported_compressed_pixeldata(self):
-        """Use PIL to decompress compressed Pixel Data.
-
-        Returns
-        -------
-        bytes or str
-            The decompressed Pixel Data
-
-        Raises
-        ------
-        ImportError
-            If PIL is not available.
-        NotImplementedError
-            If unable to decompress the Pixel Data.
-        """
-        if not have_pillow:
-            msg = "The pillow package is required to use pixel_array for " \
-                  "this transfer syntax {0}, and pillow could not be " \
-                  "imported.".format(self.file_meta.TransferSyntaxUID)
-            raise ImportError(msg)
-        # decompress here
-        if self.file_meta.TransferSyntaxUID in pydicom.uid.JPEGLossyCompressedPixelTransferSyntaxes:
-            if self.BitsAllocated > 8:
-                raise NotImplementedError("JPEG Lossy only supported if Bits "
-                                          "Allocated = 8")
-            generic_jpeg_file_header = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00\x01\x00\x01\x00\x00'
-            frame_start_from = 2
-        elif self.file_meta.TransferSyntaxUID in pydicom.uid.JPEG2000CompressedPixelTransferSyntaxes:
-            generic_jpeg_file_header = b''
-            # generic_jpeg_file_header = b'\x00\x00\x00\x0C\x6A\x50\x20\x20\x0D\x0A\x87\x0A'
-            frame_start_from = 0
-        else:
-            generic_jpeg_file_header = b''
-            frame_start_from = 0
-        try:
-            UncompressedPixelData = ''
-            if 'NumberOfFrames' in self and self.NumberOfFrames > 1:
-                # multiple compressed frames
-                CompressedPixelDataSeq = pydicom.encaps.decode_data_sequence(self.PixelData)
-                for frame in CompressedPixelDataSeq:
-                    data = generic_jpeg_file_header + frame[frame_start_from:]
-                    fio = io.BytesIO(data)
-                    try:
-                        decompressed_image = PILImg.open(fio)
-                    except IOError as e:
-                        raise NotImplementedError(e.message)
-                    UncompressedPixelData += decompressed_image.tobytes()
-            else:
-                # single compressed frame
-                UncompressedPixelData = pydicom.encaps.defragment_data(self.PixelData)
-                UncompressedPixelData = generic_jpeg_file_header + UncompressedPixelData[frame_start_from:]
-                try:
-                    fio = io.BytesIO(UncompressedPixelData)
-                    decompressed_image = PILImg.open(fio)
-                except IOError as e:
-                    raise NotImplementedError(e.message)
-                UncompressedPixelData = decompressed_image.tobytes()
-        except:
-            raise
-        return UncompressedPixelData
-
-    def _get_jpeg_ls_supported_compressed_pixeldata(self):
-        """Use jpeg_ls to decompress compressed Pixel Data.
-
-        Returns
-        -------
-        bytes or str
-            The decompressed Pixel Data
-
-        Raises
-        ------
-        ImportError
-            If jpeg_ls is not available.
-        """
-        if not have_jpeg_ls:
-            msg = "The jpeg_ls package is required to use pixel_array for " \
-                  "this transfer syntax {0}, and jpeg_ls could not be " \
-                  "imported.".format(self.file_meta.TransferSyntaxUID)
-            raise ImportError(msg)
-        # decompress here
-        UncompressedPixelData = ''
-        if 'NumberOfFrames' in self and self.NumberOfFrames > 1:
-            # multiple compressed frames
-            CompressedPixelDataSeq = pydicom.encaps.decode_data_sequence(self.PixelData)
-            # print len(CompressedPixelDataSeq)
-            for frame in CompressedPixelDataSeq:
-                decompressed_image = jpeg_ls.decode(numpy.fromstring(frame, dtype=numpy.uint8))
-                UncompressedPixelData += decompressed_image.tobytes()
-        else:
-            # single compressed frame
-            CompressedPixelData = pydicom.encaps.defragment_data(self.PixelData)
-            decompressed_image = jpeg_ls.decode(numpy.fromstring(CompressedPixelData, dtype=numpy.uint8))
-            UncompressedPixelData = decompressed_image.tobytes()
-        return UncompressedPixelData
-
-    # Use by pixel_array property
-    def _get_pixel_array(self):
-        """Convert the Pixel Data to a numpy array.
-
-        Returns
-        -------
-        numpy.ndarray
-            The array containing the Pixel Data.
+        Notes
+        -----
+        If the pixel data is in a compressed image format, the data is
+        decompressed and any related data elements are changed accordingly.
         """
         # Check if already have converted to a NumPy array
         # Also check if self.PixelData has changed. If so, get new NumPy array
@@ -967,18 +808,134 @@ class Dataset(dict):
             already_have = False
         elif self._pixel_id != id(self.PixelData):
             already_have = False
-        if not already_have and not self._is_uncompressed_transfer_syntax():
+
+        if already_have:
+            return
+
+        # Find all possible handlers that support the transfer syntax
+        transfer_syntax = self.file_meta.TransferSyntaxUID
+        possible_handlers = [hh for hh in pydicom.config.pixel_data_handlers
+                             if hh.supports_transfer_syntax(transfer_syntax)]
+
+        # No handlers support the transfer syntax
+        if not possible_handlers:
+            raise NotImplementedError(
+                "Unable to decode pixel data with a transfer syntax UID of "
+                "'{0}' ({1}) as there are no pixel data handlers "
+                "available that support it. Please see the pydicom "
+                "documentation for information on supported transfer syntaxes "
+                .format(self.file_meta.TransferSyntaxUID,
+                        self.file_meta.TransferSyntaxUID.name)
+            )
+
+        # Handlers that both support the transfer syntax and have their
+        #   dependencies met
+        available_handlers = [hh for hh in possible_handlers if
+                              hh.is_available()]
+
+        # There are handlers that support the transfer syntax but none of them
+        #   can be used as missing dependencies
+        if not available_handlers:
+            # For each of the possible handlers we want to find which
+            #   dependencies are missing
+            msg = (
+                "The following handlers are available to decode the pixel "
+                "data however they are missing required dependencies: "
+            )
+            pkg_msg = []
+            for hh in possible_handlers:
+                hh_deps = hh.DEPENDENCIES
+                # Missing packages
+                missing = [dd for dd in hh_deps if have_package(dd) is None]
+                # Package names
+                names = [hh_deps[name][1] for name in missing]
+                pkg_msg.append(
+                    "{} (req. {})"
+                    .format(hh.HANDLER_NAME, ', '.join(names))
+                )
+
+            raise RuntimeError(msg + ', '.join(pkg_msg))
+
+        last_exception = None
+        for handler in available_handlers:
             try:
-                # print("Pixel Data is compressed")
-                self._pixel_array = self._compressed_pixel_data_numpy()
-                self._pixel_id = id(self.PixelData)  # is this guaranteed to work if memory is re-used??
-                return self._pixel_array
-            except IOError:
-                logger.info("Pillow or JPLS did not support this transfer syntax")
-        if not already_have:
-            self._pixel_array = self._pixel_data_numpy()
-            self._pixel_id = id(self.PixelData)  # is this guaranteed to work if memory is re-used??
-        return self._pixel_array
+                # Use the handler to get a 1D numpy array of the pixel data
+                arr = handler.get_pixeldata(self)
+                self._pixel_array = reshape_pixel_array(self, arr)
+
+                # Some handler/transfer syntax combinations may need to
+                #   convert the color space from YCbCr to RGB
+                if handler.needs_to_convert_to_RGB(self):
+                    self._pixel_array = convert_color_space(self._pixel_array,
+                                                            'YBR_FULL',
+                                                            'RGB')
+
+                self._pixel_id = id(self.PixelData)
+
+                return
+            except Exception as exc:
+                logger.debug(
+                    "Exception raised by pixel data handler", exc_info=exc
+                )
+                last_exception = exc
+
+        # The only way to get to this point is if we failed to get the pixel
+        #   array because all suitable handlers raised exceptions
+        self._pixel_array = None
+        self._pixel_id = None
+
+        logger.info(
+            "Unable to decode the pixel data using the following handlers: {}."
+            "Please see the list of supported Transfer Syntaxes in the "
+            "pydicom documentation for alternative packages that might "
+            "be able to decode the data"
+            .format(", ".join([str(hh) for hh in available_handlers]))
+        )
+
+        raise last_exception
+
+    def decompress(self):
+        """Decompresses pixel data and modifies the Dataset in-place
+
+        If not a compressed tranfer syntax, then pixel data is converted
+        to a numpy array internally, but not returned.
+
+        If compressed pixel data, then is decompressed using an image handler,
+        and internal state is updated appropriately:
+            - TransferSyntax is updated to non-compressed form
+            - is_undefined_length for pixel data is set False
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        NotImplementedError
+            If the pixel data was originally compressed but file is not
+            ExplicitVR LittleEndian as required by Dicom standard
+        """
+        self.convert_pixel_data()
+        self.is_decompressed = True
+        # May have been undefined length pixel data, but won't be now
+        if 'PixelData' in self:
+            self[0x7fe00010].is_undefined_length = False
+
+        # Make sure correct Transfer Syntax is set
+        # According to the dicom standard PS3.5 section A.4,
+        # all compressed files must have been explicit VR, little endian
+        # First check if was a compressed file
+        if (hasattr(self, 'file_meta') and
+                self.file_meta.TransferSyntaxUID.is_compressed):
+            # Check that current file as read does match expected
+            if not self.is_little_endian or self.is_implicit_VR:
+                msg = ("Current dataset does not match expected ExplicitVR "
+                       "LittleEndian transfer syntax from a compressed "
+                       "transfer syntax")
+                raise NotImplementedError(msg)
+
+            # All is as expected, updated the Transfer Syntax
+            self.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
 
     @property
     def pixel_array(self):
@@ -989,22 +946,19 @@ class Dataset(dict):
         numpy.ndarray
             The Pixel Data (7FE0,0010) as a NumPy ndarray.
         """
-        try:
-            return self._get_pixel_array()
-        except AttributeError:
-            t, e, tb = sys.exc_info()
-            val = PropertyError("AttributeError in pixel_array property: " +
-                                e.args[0])
-            compat.reraise(PropertyError, val, tb)
+        self.convert_pixel_data()
+        return self._pixel_array
 
     # Format strings spec'd according to python string formatting options
-    #    See http://docs.python.org/library/stdtypes.html#string-formatting-operations
+    #    See http://docs.python.org/library/stdtypes.html#string-formatting-operations # noqa
     default_element_format = "%(tag)s %(name)-35.35s %(VR)s: %(repval)s"
-    default_sequence_element_format = "%(tag)s %(name)-35.35s %(VR)s: %(repval)s"
+    default_sequence_element_format = "%(tag)s %(name)-35.35s %(VR)s: %(repval)s"  # noqa
 
-    def formatted_lines(self, element_format=default_element_format,
-                        sequence_element_format=default_sequence_element_format,
-                        indent_format=None):
+    def formatted_lines(
+            self,
+            element_format=default_element_format,
+            sequence_element_format=default_sequence_element_format,
+            indent_format=None):
         """Iterate through the Dataset yielding formatted str for each element.
 
         Parameters
@@ -1028,27 +982,30 @@ class Dataset(dict):
         for data_element in self.iterall():
             # Get all the attributes possible for this data element (e.g.
             #   gets descriptive text name too)
-            # This is the dictionary of names that can be used in the format string
+            # This is the dictionary of names that can be used in the format
+            #   string
             elem_dict = dict([(x, getattr(data_element, x)()
-                               if callable(getattr(data_element, x))
-                               else getattr(data_element, x))
-                              for x in dir(data_element) if not x.startswith("_")])
+                               if callable(getattr(data_element, x)) else
+                               getattr(data_element, x))
+                              for x in dir(data_element)
+                              if not x.startswith("_")])
             if data_element.VR == "SQ":
                 yield sequence_element_format % elem_dict
             else:
                 yield element_format % elem_dict
 
     def _pretty_str(self, indent=0, top_level_only=False):
-        """Return a string of the DataElements in the Dataset, with indented levels.
+        """Return a string of the DataElements in the Dataset, with indented
+        levels.
 
         This private method is called by the __str__() method for handling
         print statements or str(dataset), and the __repr__() method.
-        It is also used by top(), which is the reason for the top_level_only flag.
+        It is also used by top(), therefore the top_level_only flag.
         This function recurses, with increasing indentation levels.
 
         Parameters
         ----------
-        index : int
+        indent : int
             The indent level offset (default 0)
         top_level_only : bool
             When True, only create a string for the top level elements, i.e.
@@ -1064,11 +1021,11 @@ class Dataset(dict):
         nextindent_str = self.indent_chars * (indent + 1)
         for data_element in self:
             with tag_in_exception(data_element.tag):
-                if data_element.VR == "SQ":   # a sequence
+                if data_element.VR == "SQ":  # a sequence
                     strings.append(indent_str + str(data_element.tag) +
-                                   "  %s   %i item(s) ---- "
-                                   %(data_element.description(),
-                                     len(data_element.value)))
+                                   "  %s   %i item(s) ---- " %
+                                   (data_element.description(),
+                                    len(data_element.value)))
                     if not top_level_only:
                         for dataset in data_element.value:
                             strings.append(dataset._pretty_str(indent + 1))
@@ -1079,66 +1036,118 @@ class Dataset(dict):
 
     def remove_private_tags(self):
         """Remove all private DataElements in the Dataset."""
+
         def RemoveCallback(dataset, data_element):
             """Internal method to use as callback to walk() method."""
             if data_element.tag.is_private:
                 # can't del self[tag] - won't be right dataset on recursion
                 del dataset[data_element.tag]
+
         self.walk(RemoveCallback)
 
     def save_as(self, filename, write_like_original=True):
-        """Write the Dataset to a file.
+        """Write the Dataset to `filename`.
 
-        When saving a new Dataset, you need to add the following attributes:
-        -file_meta : Dataset or None
-        -is_implicit_VR : bool
-        -is_little_endian : bool
-        -preamble : bytes (optional)
-        When saving a FileDataset that has been read from file these attributes
-        should already be present.
+        Saving a Dataset requires that the Dataset.is_implicit_VR and
+        Dataset.is_little_endian attributes exist and are set appropriately. If
+        Dataset.file_meta.TransferSyntaxUID is present then it should be set to
+        a consistent value to ensure conformance.
+
+        Conformance with DICOM File Format
+        ----------------------------------
+        If `write_like_original` is False, the Dataset will be stored in the
+        DICOM File Format in accordance with DICOM Standard Part 10 Section 7.
+        To do so requires that the `Dataset.file_meta` attribute exists and
+        contains a Dataset with the required (Type 1) File Meta Information
+        Group elements (see pydicom.filewriter.dcmwrite and
+        pydicom.filewriter.write_file_meta_info for more information).
+
+        If `write_like_original` is True then the Dataset will be written as is
+        (after minimal validation checking) and may or may not contain all or
+        parts of the File Meta Information (and hence may or may not be
+        conformant with the DICOM File Format).
 
         Parameters
         ----------
-        filename : str
-            Name of file to save new DICOM file to.
+        filename : str or file-like
+            Name of file or the file-like to write the new DICOM file to.
         write_like_original : bool
             If True (default), preserves the following information from
-            the Dataset:
-            -preamble -- if no preamble in read file, than not used here
-            -file_meta -- if writer did not do file meta information,
-                then don't write here either
-            -seq.is_undefined_length -- if original had delimiters, write them
-                now too, instead of the more sensible length characters.
-            -is_undefined_length_sequence_item -- for datasets that belong to a
-                sequence, write the undefined length delimiters if that is
+            the Dataset (and may result in a non-conformant file):
+            - preamble -- if the original file has no preamble then none will
+                be written.
+            - file_meta -- if the original file was missing any required File
+                Meta Information Group elements then they will not be added or
+                written.
+                If (0002,0000) 'File Meta Information Group Length' is present
+                then it may have its value updated.
+            - seq.is_undefined_length -- if original had delimiters, write them
+                now too, instead of the more sensible length characters
+            - is_undefined_length_sequence_item -- for datasets that belong to
+                a sequence, write the undefined length delimiters if that is
                 what the original had.
-            If False, produces a "nicer" DICOM file for other readers,
-                where all lengths are explicit.
+            If False, produces a file conformant with the DICOM File Format,
+            with explicit lengths for all elements.
 
         See Also
         --------
-        pydicom.filewriter.write_file
+        pydicom.filewriter.write_dataset
+            Write a DICOM Dataset to a file.
+        pydicom.filewriter.write_file_meta_info
+            Write the DICOM File Meta Information Group elements to a file.
+        pydicom.filewriter.dcmwrite
             Write a DICOM file from a FileDataset instance.
-
-        Notes
-        -----
-        Set Dataset.preamble if you want something other than 128 0-bytes.
-        If the dataset was read from an existing DICOM file, then its preamble
-        was stored at read time. It is up to the user to ensure the preamble is
-        still correct for its purposes.
-
-        If there is no 'Transfer Syntax UID' element in the file_meta Dataset,
-        then set Dataset.is_implicit_VR (bool) and Dataset.is_little_endian
-        (bool) to automatically determine the transfer syntax used to write the
-        file.
         """
-        pydicom.write_file(filename, self, write_like_original)
+        # Ensure is_little_endian and is_implicit_VR are set
+        if self.is_little_endian is None or self.is_implicit_VR is None:
+            raise AttributeError(
+                "'{0}.is_little_endian' and '{0}.is_implicit_VR' must be "
+                "set appropriately before saving.".format(
+                    self.__class__.__name__))
+
+        pydicom.dcmwrite(filename, self, write_like_original)
+
+    def ensure_file_meta(self):
+        """Create an empty file meta dataset if none exists."""
+        self.file_meta = getattr(self, 'file_meta', Dataset())
+
+    def fix_meta_info(self, enforce_standard=True):
+        """Ensure the file meta info exists and has the correct values
+        for transfer syntax and media storage uids.
+
+        .. warning::
+
+            The transfer syntax for is_implicit_VR = False and
+            is_little_endian = True is ambiguous and will therefore not be set.
+
+        Parameters
+        ----------
+        enforce_standard : boolean
+            If True, a check for incorrect and missing elements is performed.
+            (see pydicom.filewriter.validate_file_meta)
+
+        """
+        self.ensure_file_meta()
+
+        if self.is_little_endian and self.is_implicit_VR:
+            self.file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
+        elif not self.is_little_endian and not self.is_implicit_VR:
+            self.file_meta.TransferSyntaxUID = ExplicitVRBigEndian
+        elif not self.is_little_endian and self.is_implicit_VR:
+            raise NotImplementedError("Implicit VR Big Endian is not a "
+                                      "supported Transfer Syntax.")
+
+        if 'SOPClassUID' in self:
+            self.file_meta.MediaStorageSOPClassUID = self.SOPClassUID
+        if 'SOPInstanceUID' in self:
+            self.file_meta.MediaStorageSOPInstanceUID = self.SOPInstanceUID
+        if enforce_standard:
+            validate_file_meta(self.file_meta, enforce_standard=True)
 
     def __setattr__(self, name, value):
         """Intercept any attempts to set a value for an instance attribute.
 
-        If name is a DICOM descriptive string (cleaned with CleanName), then
-        set the corresponding tag and DataElement.
+        If name is a DICOM keyword, set the corresponding tag and DataElement.
         Else, set an instance (python) attribute as any other class would do.
 
         Parameters
@@ -1150,17 +1159,27 @@ class Dataset(dict):
         value
             The value for the attribute to be added/changed.
         """
-        tag = tag_for_name(name)
+        tag = tag_for_keyword(name)
         if tag is not None:  # successfully mapped name to a tag
-            if tag not in self:  # don't have this tag yet->create the data_element instance
-                VR = dictionaryVR(tag)
+            if tag not in self:
+                # don't have this tag yet->create the data_element instance
+                VR = dictionary_VR(tag)
                 data_element = DataElement(tag, VR, value)
-            else:  # already have this data_element, just changing its value
+            else:
+                # already have this data_element, just changing its value
                 data_element = self[tag]
                 data_element.value = value
             # Now have data_element - store it in this dict
             self[tag] = data_element
-        else:  # name not in dicom dictionary - setting a non-dicom instance attribute
+        elif repeater_has_keyword(name):
+            # Check if `name` is repeaters element
+            raise ValueError('{} is a DICOM repeating group '
+                             'element and must be added using '
+                             'the add() or add_new() methods.'
+                             .format(name))
+        else:
+            # name not in dicom dictionary - setting a non-dicom instance
+            # attribute
             # XXX note if user mis-spells a dicom data_element - no error!!!
             super(Dataset, self).__setattr__(name, value)
 
@@ -1178,13 +1197,22 @@ class Dataset(dict):
 
         Raises
         ------
+        NotImplementedError
+            If `key` is a slice.
         ValueError
             If the `key` value doesn't match DataElement.tag.
         """
+        if isinstance(key, slice):
+            raise NotImplementedError('Slicing is not supported for setting '
+                                      'Dataset elements.')
+
         # OK if is subclass, e.g. DeferredDataElement
         if not isinstance(value, (DataElement, RawDataElement)):
             raise TypeError("Dataset contents must be DataElement instances.")
-        tag = Tag(value.tag)
+        if isinstance(value.tag, BaseTag):
+            tag = value.tag
+        else:
+            tag = Tag(value.tag)
         if key != tag:
             raise ValueError("DataElement.tag must match the dictionary key")
 
@@ -1195,11 +1223,61 @@ class Dataset(dict):
             private_block = tag.elem >> 8
             private_creator_tag = Tag(tag.group, private_block)
             if private_creator_tag in self and tag != private_creator_tag:
-                if isinstance(data_element, RawDataElement):
-                    data_element = DataElement_from_raw(data_element,
-                                                        self._character_set)
+                if data_element.is_raw:
+                    data_element = DataElement_from_raw(
+                        data_element, self._character_set)
                 data_element.private_creator = self[private_creator_tag].value
-        dict.__setitem__(self, tag, data_element)
+        self._dict[tag] = data_element
+
+    def _slice_dataset(self, start, stop, step):
+        """Return the element tags in the Dataset that match the slice.
+
+        Parameters
+        ----------
+        start : int or 2-tuple of int or None
+            The slice's starting element tag value, in any format accepted by
+            pydicom.tag.Tag.
+        stop : int or 2-tuple of int or None
+            The slice's stopping element tag value, in any format accepted by
+            pydicom.tag.Tag.
+        step : int or None
+            The slice's step size.
+
+        Returns
+        ------
+        list of pydicom.tag.Tag
+            The tags in the Dataset that meet the conditions of the slice.
+        """
+        # Check the starting/stopping Tags are valid when used
+        if start is not None:
+            start = Tag(start)
+        if stop is not None:
+            stop = Tag(stop)
+
+        all_tags = sorted(self._dict.keys())
+        # If the Dataset is empty, return an empty list
+        if not all_tags:
+            return []
+
+        # Special case the common situations:
+        #   - start and/or stop are None
+        #   - step is 1
+
+        if start is None:
+            if stop is None:
+                # For step=1 avoid copying the list
+                return all_tags if step == 1 else all_tags[::step]
+            else:  # Have a stop value, get values until that point
+                step1_list = list(takewhile(lambda x: x < stop, all_tags))
+                return step1_list if step == 1 else step1_list[::step]
+
+        # Have a non-None start value.  Find its index
+        i_start = bisect_left(all_tags, start)
+        if stop is None:
+            return all_tags[i_start::step]
+        else:
+            i_stop = bisect_left(all_tags, stop)
+            return all_tags[i_start:i_stop:step]
 
     def __str__(self):
         """Handle str(dataset)."""
@@ -1218,7 +1296,13 @@ class Dataset(dict):
         return dir(self)  # only valid python >=2.6, else use self.__dir__()
 
     def update(self, dictionary):
-        """Extend dict.update() to handle DICOM keywords."""
+        """Extend dict.update() to handle DICOM keywords.
+
+        Parameters
+        ----------
+        dictionary : dict or Dataset
+            The dict or Dataset to use when updating the current object.
+        """
         for key, value in list(dictionary.items()):
             if isinstance(key, (str, compat.text_type)):
                 setattr(self, key, value)
@@ -1262,13 +1346,14 @@ class Dataset(dict):
         recursive : bool
             Flag to indicate whether to recurse into Sequences.
         """
-        taglist = sorted(self.keys())
+        taglist = sorted(self._dict.keys())
         for tag in taglist:
 
             with tag_in_exception(tag):
                 data_element = self[tag]
                 callback(self, data_element)  # self = this Dataset
-                # 'tag in self' below needed in case callback deleted data_element
+                # 'tag in self' below needed in case callback deleted
+                # data_element
                 if recursive and tag in self and data_element.VR == "SQ":
                     sequence = data_element.value
                     for dataset in sequence:
@@ -1301,14 +1386,21 @@ class FileDataset(Dataset):
         The modification time of the file the dataset was read from, None if
         the modification time is not available.
     """
-    def __init__(self, filename_or_obj, dataset, preamble=None, file_meta=None,
-                 is_implicit_VR=True, is_little_endian=True):
+
+    def __init__(self,
+                 filename_or_obj,
+                 dataset,
+                 preamble=None,
+                 file_meta=None,
+                 is_implicit_VR=True,
+                 is_little_endian=True):
         """Initialize a Dataset read from a DICOM file.
 
         Parameters
         ----------
-        filename_or_obj : str or None
-            Full path and filename to the file. Use None if is a BytesIO.
+        filename_or_obj : str or BytesIO or None
+            Full path and filename to the file, memory buffer object, or None
+            if is a BytesIO.
         dataset : Dataset or dict
             Some form of dictionary, usually a Dataset from read_dataset().
         preamble : bytes or str, optional
@@ -1336,14 +1428,101 @@ class FileDataset(Dataset):
             # This is the appropriate constructor for io.BufferedReader
             self.fileobj_type = open
         else:
-            self.fileobj_type = filename_or_obj.__class__  # use __class__ python <2.7?; http://docs.python.org/reference/datamodel.html
+            # use __class__ python <2.7?;
+            # http://docs.python.org/reference/datamodel.html
+            self.fileobj_type = filename_or_obj.__class__
             if getattr(filename_or_obj, "name", False):
                 self.filename = filename_or_obj.name
-            elif getattr(filename_or_obj, "filename", False):  # gzip python <2.7?
+            elif getattr(filename_or_obj, "filename",
+                         False):  # gzip python <2.7?
                 self.filename = filename_or_obj.filename
             else:
-                self.filename = None  # e.g. came from BytesIO or something file-like
+                # e.g. came from BytesIO or something file-like
+                self.filename = None
         self.timestamp = None
-        if stat_available and self.filename and os.path.exists(self.filename):
+        if self.filename and os.path.exists(self.filename):
             statinfo = os.stat(self.filename)
             self.timestamp = statinfo.st_mtime
+
+    def __eq__(self, other):
+        """Compare `self` and `other` for equality.
+
+        Returns
+        -------
+        bool
+            The result if `self` and `other` are the same class
+        NotImplemented
+            If `other` is not the same class as `self` then returning
+            NotImplemented delegates the result to superclass.__eq__(subclass)
+        """
+        # When comparing against self this will be faster
+        if other is self:
+            return True
+
+        if isinstance(other, self.__class__):
+            # Compare Elements using values() and class members using __dict__
+            # Convert values() to a list for compatibility between
+            #   python 2 and 3
+            # Sort values() by element tag
+            self_elem = sorted(list(self.values()), key=lambda x: x.tag)
+            other_elem = sorted(list(other.values()), key=lambda x: x.tag)
+            return self_elem == other_elem and self.__dict__ == other.__dict__
+
+        return NotImplemented
+
+
+def validate_file_meta(file_meta, enforce_standard=True):
+    """Validates the File Meta Information elements in `file_meta` and
+    adds some tags if missing and `enforce_standard` is True.
+
+    Parameters
+    ----------
+    file_meta : pydicom.dataset.Dataset
+        The File Meta Information data elements.
+    enforce_standard : bool
+        If False, then only a check for invalid elements is performed.
+        If True, the following elements will be added if not already present:
+            * (0002,0001) FileMetaInformationVersion
+            * (0002,0012) ImplementationClassUID
+            * (0002,0013) ImplementationVersionName
+        and the following elements will be checked:
+            * (0002,0002) MediaStorageSOPClassUID
+            * (0002,0003) MediaStorageSOPInstanceUID
+            * (0002,0010) TransferSyntaxUID
+
+    Raises
+    ------
+    ValueError
+        If `enforce_standard` is True and any of the checked File Meta
+        Information elements are missing from `file_meta`.
+    ValueError
+        If any non-Group 2 Elements are present in `file_meta`.
+    """
+    # Check that no non-Group 2 Elements are present
+    for elem in file_meta.elements():
+        if elem.tag.group != 0x0002:
+            raise ValueError("Only File Meta Information Group (0002,eeee) "
+                             "elements must be present in 'file_meta'.")
+
+    if enforce_standard:
+        if 'FileMetaInformationVersion' not in file_meta:
+            file_meta.FileMetaInformationVersion = b'\x00\x01'
+
+        if 'ImplementationClassUID' not in file_meta:
+            file_meta.ImplementationClassUID = PYDICOM_IMPLEMENTATION_UID
+
+        if 'ImplementationVersionName' not in file_meta:
+            file_meta.ImplementationVersionName = (
+                'PYDICOM ' + ".".join(str(x) for x in __version_info__))
+
+        # Check that required File Meta Information elements are present
+        missing = []
+        for element in [0x0002, 0x0003, 0x0010]:
+            if Tag(0x0002, element) not in file_meta:
+                missing.append(Tag(0x0002, element))
+        if missing:
+            msg = ("Missing required File Meta Information elements from "
+                   "'file_meta':\n")
+            for tag in missing:
+                msg += '\t{0} {1}\n'.format(tag, keyword_for_tag(tag))
+            raise ValueError(msg[:-1])  # Remove final newline
