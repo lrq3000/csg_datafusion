@@ -19,16 +19,17 @@ Please place all original databases in a folder "databases_original". After runn
 Here is the advised steps order for generating a clean unified database from Coma Science Group multiple databases:
 
 1- extract_fields_from_reports
-2- dicoms_extract
-3- fmp_db_cleaner
-4- sarah_db_cleaner
-5- stats_analysis_fmp_dicoms_db
-6- stats_analysis_fmp_dicoms_db_acute
-7- optional: ecg_db_generator
-8- db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps)
-9- finaldbunification
-10- dicom2nifti_convert
-11- modular_reorganizer
+2- optional: dicoms_reorganizer (to ensure there is no duplicates, else the dicom_to_nifti conversion and modular_reorganizer steps might become a headache + it will speed up calculations by removing duplicates)
+3- dicoms_extract
+4- fmp_db_cleaner
+5- sarah_db_cleaner
+6- stats_analysis_fmp_dicoms_db
+7- stats_analysis_fmp_dicoms_db_acute
+8- optional: ecg_db_generator
+9- db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps)
+10- finaldbunification
+11- dicom2nifti_convert
+12- modular_reorganizer
 
 Tip: when you convert an input database from .xls or .xlsx (Excel) to csv format to be able to use these notebooks, please make sure to convert with a UTF-8 encoding and a CSV format that can store the BOM (eg, in Office Excel, choose "CSV (Comma delimited)" format when saving, and not "CSV (MS-DOS)" nor "CSV (Macintosh)").
 
