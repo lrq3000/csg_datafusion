@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.7.9
+# v2.8.1
 #
 
 from __future__ import absolute_import
@@ -217,6 +217,20 @@ def recwalk(inputpath, sorting=True, folders=False, topdown=True, filetype=None)
             if folders:
                 for folder in dirs:
                     yield (dirpath, folder)
+
+def create_dir_if_not_exist(path):
+    """Create a directory if it does not already exist, else nothing is done and no error is return"""
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+def real_copy(srcfile, dstfile):
+    """Copy a file or a folder and keep stats"""
+    shutil.copyfile(srcfile, dstfile)
+    shutil.copystat(srcfile, dstfile)
+
+def symbolic_copy(srcfile, dstfile):
+    """Create a symlink (symbolic/soft link) instead of a real copy"""
+    os.symlink(srcfile, dstfile)
 
 def sort_list_a_given_list_b(list_a, list_b):
     return sorted(list_a, key=lambda x: list_b.index(x))
@@ -1103,3 +1117,139 @@ def filter_nan_str(x):
 def df_filter_nan_str(df_col):
     """Filter all 'nan' values as strings from a Dataframe column containing lists"""
     return df_col.apply(df_literal_eval).apply(filter_nan_str).astype('str')
+
+
+######################## DICOMS #############################
+
+def generate_path_from_dicom_fields(output_dir, dcmdata, key_dicom_fields, cleanup_dicom_fields=True):
+    pathparts = []
+    # For each outer list elements (will be concatenated with a directory separator like '/')
+    for dfields in key_dicom_fields:
+        if not isinstance(dfields, list):
+            dfields = [dfields]
+        innerpathparts = []
+        # For each inner list elements (will be concatenated with '_')
+        for dfield in dfields:
+            # Extract the dicom field's value
+            if dfield in dcmdata:
+                if isinstance(dfield, str):
+                    # If string (a named field)
+                    dcmfieldval = dcmdata[dcmdata.data_element(dfield).tag].value
+                else:
+                    # Else it's a coordinate field (no name, like (0010, 2020))
+                    dcmfieldval = dcmdata[dfield].value
+            else:
+                dcmfieldval = placeholder_value
+            # Cleanup the dicom field is enabled (this will replace accentuated characters, most english softwares do not support those)
+            if cleanup_dicom_fields:
+                dcmfieldval = cleanup_name(dcmfieldval)
+            # Add the path parts to the list
+            innerpathparts.append(dcmfieldval)
+        # Concatenate the inner path parts and add to the outer path parts list
+        pathparts.append('_'.join(innerpathparts))
+    # Build the full path from the outer path parts list
+    pathpartsassembled = os.path.join(*pathparts)
+    # Replace all spaces by dashes (so that programs that do not support spaces well won't be bothered)
+    pathpartsassembled = re.sub(r'\s+', r'-', pathpartsassembled, count=0)
+    # Join with output dir to get final path
+    finalpathdir = os.path.join(output_dir, pathpartsassembled)
+    return finalpathdir
+
+def recwalk_dcm(*args, **kwargs):
+    """Recursive DICOM metadata reader, supporting zipfiles.
+    Yields for each dicom file (whether normal or inside a zipfile) a dictionary filled with DICOM file metadata, path and zip handler if it is inside a zipfile.
+    Comes with an integrated progress bar."""
+    if 'verbose' in kwargs:
+        verbose = kwargs['verbose']
+        del kwargs['verbose']
+    else:
+        verbose = False
+    if 'nobar' in kwargs:
+        nobar = kwargs['nobar']
+        del kwargs['nobar']
+    else:
+        nobar = False
+    if not 'filetype' in kwargs:
+        kwargs['filetype'] = ['.dcm', '', '.zip']
+
+    # Make list of filetypes for zipfile
+    # Process no extension separately (because else endswith() will accept any extension if we supply '')
+    noextflag = False
+    filetypes = list(kwargs['filetype'])  # make a copy
+    if '' in filetypes:
+        filetypes.remove('')
+        filetypes = tuple(filetypes)  # endswith() only supports tuples
+        noextflag = True
+
+    # Counting total number of files (to show a progress bar)
+    filescount = 0
+    if not nobar:
+        for dirpath, filename in _tqdm(recwalk(*args, **kwargs), desc='PRECOMP', unit='files'):
+            if not filename.endswith('.zip'):
+                filescount +=1
+            else:
+                try:
+                    zfilepath = os.path.join(dirpath, filename)
+                    with zipfile.ZipFile(zfilepath, 'r') as zipfh:
+                        zfilescount = sum(1 for item in zipfh.namelist() if not item.endswith('/'))
+                    filescount += zfilescount
+                except zipfile.BadZipfile as exc:
+                    # If the zipfile is unreadable, just pass
+                    if verbose:
+                        print('Error: Bad zip file: %s' % os.path.join(dirpath, filename))
+                    pass
+
+    pbar = _tqdm(total=filescount, desc='REORG', unit='files', disable=nobar)
+    for dirpath, filename in recwalk(*args, **kwargs):
+        try:
+            if not filename.endswith('.zip'):
+                if filename.lower() == 'dicomdir':  # pass DICOMDIR files
+                    continue
+                try:
+                    if verbose:
+                        print('* Try to read fields from dicom file: %s' % os.path.join(dirpath, filename))
+                    # Update progress bar
+                    pbar.update()
+                    # Read the dicom data in memory (via StringIO)
+                    dcmdata = pydicom.read_file(os.path.join(dirpath, filename), stop_before_pixels=True, defer_size="512 KB", force=True)  # stop_before_pixels allow for faster processing since we do not read the full dicom data, and here we can use it because we do not modify the dicom, we only read it to extract the dicom patient name. defer_size avoids reading everything into memory, which workarounds issues with some malformatted fields that are too long (OverflowError: Python int too large to convert to C long)
+                    yield {'data': dcmdata, 'dirpath': dirpath, 'filename': filename}
+                except (InvalidDicomError, AttributeError, OverflowError) as exc:
+                    pass
+            else:
+                try:
+                    zfilepath = os.path.join(dirpath, filename)
+                    with zipfile.ZipFile(zfilepath, 'r') as zipfh:
+                        #zfolders = (item for item in zipfh.namelist() if item.endswith('/'))
+                        zfiles = ( item for item in zipfh.infolist() if (not item.filename.endswith('/') and (item.filename.endswith(filetypes) or (noextflag and not '.' in item.filename))) )  # infolist() is better than namelist() because it will also work in case of duplicate filenames
+                        for zfile in zfiles:
+                            # Update progress bar
+                            pbar.update()
+                            # Need to extract because pydicom does not support not having seek() (and zipfile in-memory does not provide seek())
+                            zf = zfile.filename
+                            if zf.lower().endswith('dicomdir'):  # pass DICOMDIR files
+                                continue
+                            z = _StringIO(zipfh.read(zf)) # do not use .extract(), the path can be anything and it does not support unicode (so it can easily extract to the root instead of target folder!)
+                            # Try to open the extracted dicom
+                            try:
+                                if verbose:
+                                    print('* Try to decode dicom fields with zipfile member %s' % zf)
+                                # Read the dicom data in memory (via StringIO)
+                                dcmdata = pydicom.read_file(z, stop_before_pixels=True, defer_size="512 KB", force=True)  # stop_before_pixels allow for faster processing since we do not read the full dicom data, and here we can use it because we do not modify the dicom, we only read it to extract the dicom patient name. defer_size avoids reading everything into memory, which workarounds issues with some malformatted fields that are too long (OverflowError: Python int too large to convert to C long)
+                                yield {'data': dcmdata, 'dirpath': dirpath, 'filename': filename, 'ziphandle': zipfh, 'zipfilemember': zfile}
+                            except (InvalidDicomError, AttributeError, OverflowError) as exc:
+                                pass
+                            except IOError as exc:
+                                if 'no tag to read' in str(exc).lower():
+                                    pass
+                                else:
+                                    raise
+                except zipfile.BadZipfile as exc:
+                    # If the zipfile is unreadable, just pass
+                    if verbose:
+                        print('Error: Bad zip file: %s' % os.path.join(dirpath, filename))
+                    pass
+        except Exception as exc:
+            print('ERROR: chocked on file %s' % os.path.join(dirpath, filename))
+            import traceback
+            print(traceback.format_exc())
+            raise(exc)
