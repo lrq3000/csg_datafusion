@@ -949,18 +949,18 @@ def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False, decode_if_e
 def df_literal_eval(x):
     """Evaluate each string cell of a DataFrame as if it was a Python object, and return the Python object"""
     try:
-		# Try to evaluate using ast
+        # Try to evaluate using ast
         return(ast.literal_eval(x))
     except (SyntaxError, ValueError):
-		try:
-			# Else evaluate as a list without quotes
-			if not (x.startswith('[') and x.endswith(']')):
-				raise Exception()
-			return re.split(',\s*u?', x.translate(None, '[]'))
-			# TODO: implement a real parser using pyparser: https://stackoverflow.com/a/1894785
-		except Exception as exc:
-			# Else simply return the item as-is
-			return x
+        try:
+            # Else evaluate as a list without quotes
+            if not (x.startswith('[') and x.endswith(']')):
+                raise Exception()
+            return re.split(',\s*u?', x.translate(None, '[]'))
+            # TODO: implement a real parser using pyparser: https://stackoverflow.com/a/1894785
+        except Exception as exc:
+            # Else simply return the item as-is
+            return x
 
 def df_cols_lower(df_in, col='name'):
     """Find in a DataFrame any column matching the col argument in lowercase and rename all found columns to lowercase"""
