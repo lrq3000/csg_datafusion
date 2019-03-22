@@ -957,7 +957,7 @@ def df_literal_eval(x):
             # Else evaluate as a list without quotes
             if not (x.startswith('[') and x.endswith(']')):
                 raise Exception()
-            return re.split(',\s*u?', x.translate(None, '[]'))
+            return re.split(',\s*u?', re.sub('[\[\]]', '', x))
             # TODO: implement a real parser using pyparser: https://stackoverflow.com/a/1894785
         except Exception as exc:
             # Else simply return the item as-is
