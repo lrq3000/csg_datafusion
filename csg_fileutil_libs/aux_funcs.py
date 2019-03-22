@@ -14,6 +14,7 @@ import chardet
 import copy
 import os
 import re
+import shutil
 import unicodecsv as csv
 from collections import OrderedDict
 from .dateutil import parser as dateutil_parser
@@ -1253,3 +1254,59 @@ def recwalk_dcm(*args, **kwargs):
             import traceback
             print(traceback.format_exc())
             raise(exc)
+
+def remove_if_exist(path):  # pragma: no cover
+    """Delete a file or a directory recursively if it exists, else no exception is raised"""
+    if os.path.exists(path):
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+            return True
+        elif os.path.isfile(path):
+            os.remove(path)
+            return True
+    return False
+
+def copy_any(src, dst, only_missing=False, symlink=False):  # pragma: no cover
+    """Copy a file or a directory tree, deleting the destination before processing.
+    If symlink, then the copy will only create symbolic links to the original files."""
+    def real_copy(srcfile, dstfile):
+        """Copy a file or a folder and keep stats"""
+        shutil.copyfile(srcfile, dstfile)
+        shutil.copystat(srcfile, dstfile)
+    def symbolic_copy(srcfile, dstfile):
+        """Create a symlink (symbolic/soft link) instead of a real copy"""
+        os.symlink(srcfile, dstfile)
+
+    # Delete destination folder/file if it exists
+    if not only_missing:
+        remove_if_exist(dst)
+    # Continue only if source exists
+    if os.path.exists(src):
+        # If it's a folder, recursively copy its content
+        if os.path.isdir(src):
+            # If we copy everything, we already removed the destination folder, so we can just copy it all
+            if not only_missing and not symlink:
+                shutil.copytree(src, dst, symlinks=False, ignore=None)
+            # Else we will check each file and add only new ones (present in source but absent from destination)
+            # Also if we want to only symlink all files, shutil.copytree() does not support that, so we do it here
+            else:
+                for dirpath, filepath in recwalk(src):
+                    srcfile = os.path.join(dirpath, filepath)
+                    relpath = os.path.relpath(srcfile, src)
+                    dstfile = os.path.join(dst, relpath)
+                    if not only_missing or not os.path.exists(dstfile):  # only_missing -> dstfile must not exist
+                        create_dir_if_not_exist(os.path.dirname(dstfile))
+                        if symlink:
+                            symbolic_copy(srcfile, dstfile)
+                        else:
+                            real_copy(srcfile, dstfile)
+            return True
+        # Else it is a single file, copy the file
+        elif os.path.isfile(src) and (not only_missing or not os.path.exists(dst)):
+            create_dir_if_not_exist(os.path.dirname(dst))
+            if symlink:
+                symbolic_copy(src, dst)
+            else:
+                real_copy(src, dst)
+            return True
+    return False
