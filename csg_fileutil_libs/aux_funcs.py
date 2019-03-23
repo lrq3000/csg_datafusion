@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.8.3
+# v2.8.4
 #
 
 from __future__ import absolute_import
@@ -1310,3 +1310,9 @@ def copy_any(src, dst, only_missing=False, symlink=False):  # pragma: no cover
                 real_copy(src, dst)
             return True
     return False
+
+def get_list_of_folders(rootpath):
+    return [item for item in os.listdir(rootpath) if os.path.isdir(os.path.join(rootpath, item))]
+
+def get_list_of_zip(rootpath):
+    return [item for item in os.listdir(rootpath) if os.path.isfile(os.path.join(rootpath, item)) and item.endswith('.zip')]
