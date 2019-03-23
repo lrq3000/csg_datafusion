@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.8.1
+# v2.8.3
 #
 
 from __future__ import absolute_import
@@ -955,9 +955,9 @@ def df_literal_eval(x):
     except (SyntaxError, ValueError):
         try:
             # Else evaluate as a list without quotes
-            if not (x.startswith('[') and x.endswith(']')):
+            if not ((x.startswith('[') or x.startswith('{')) and (x.endswith(']') or x.endswith('}'))):
                 raise Exception()
-            return re.split(',\s*u?', re.sub('[\[\]]', '', x))
+            return re.split(',\s*u?', re.sub('[\[\]\{\}]', '', x))
             # TODO: implement a real parser using pyparser: https://stackoverflow.com/a/1894785
         except Exception as exc:
             # Else simply return the item as-is
