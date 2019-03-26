@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.8.4
+# v2.9.0
 #
 
 from __future__ import absolute_import
@@ -318,8 +318,17 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         # If None, just return the Serie as-is, and the user can do .max() or .min() or whatever
 		return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True))
 
+def ordereddict_change_key(d, old, new):
+    """Rename the key of an ordered dict without changing the order"""
+    # from https://stackoverflow.com/a/17747040
+    d2 = d.copy()
+    for _ in range(len(d2)):
+        k, v = d2.popitem(False)
+        d2[new if old == k else k] = v
+    return d2
+
 def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, fillna_exclude=None, join_on_shared_keys=True, verbose=False, **kwargs):
-    """Compute the remapping between two dataframes based on one column, with similarity matching (normalized character-wise AND words-wise levenshtein distance)
+    """Compute the remapping between two dataframes (or a single duplicated dataframe) based on one or multiple columns. Supports similarity matching (normalized character-wise AND words-wise levenshtein distance) for names, and date comparison using provided formatting.
     mode=0 is or test, 1 is and test. In other words, this is a join with fuzzy matching on one column (based on name/id) but supporting multiple columns with exact matching for the others.
     `keep_nulls=True` if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
     `col` can either be a string for a merge based on a single column (usually name), or an OrderedDict of multiple columns names and types, following this formatting: [OrderedDict([('column1_name', 'column1_type'), ('column2_name', 'column2_type')]), OrderedDict([...])] so that you have one ordered dict for each input dataframe, and with the same number of columns (even if the names are different) and in the same order (eg, name is first column, date of acquisition as second column, etc)
@@ -332,6 +341,9 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
     if isinstance(col, list):
         # Make a backup of the columns
         keycol = list(col)
+        # Make copies of each dict to avoid modifying the originals AND to disambiguate if we are working on a single dataframe and thus list (else modifying one list will also modify the 2nd one!)
+        keycol[0] = keycol[0].copy()
+        keycol[1] = keycol[1].copy()
         # Extract id columns (type = 'id')
         keyid1 = [(x, y) for x,y in keycol[0].items() if y == 'id'][0][0]
         keyid2 = [(x, y) for x,y in keycol[1].items() if y == 'id'][0][0]
@@ -372,8 +384,16 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
     if len(cols_conflict) > 0:
         if verbose:
             print('Warning: columns naming conflicts detected: will automatically rename the following columns to avoid issues: %s' % str(cols_conflict))
+        # Rename the colluding columns in the dataframes
         df1.rename(columns={c: 'a.'+c for c in cols_conflict}, inplace=True)
         df2.rename(columns={c: 'b.'+c for c in cols_conflict}, inplace=True)
+        # Rename also the key columns if they are part of the colluding columns
+        if keycol:
+            for x,y in zip(keycol[0].keys(), keycol[1].keys()):
+                if x in cols_conflict:
+                    keycol[0] = ordereddict_change_key(keycol[0], x, 'a.'+x)
+                if y in cols_conflict:
+                    keycol[1] = ordereddict_change_key(keycol[1], y, 'b.'+y)
     # Make a backup of the original name
     df1[col+'_orig'] = df1[col]
     df2[col+'_orig2'] = df2[col]
@@ -444,12 +464,19 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
             dmerge.loc[dmerge[col].isnull(), col] = dmerge[col+'2']
             dmerge.loc[dmerge[col].isnull(), col+'2'] = dmerge[col]
         elif keep_nulls is False:
+            # Drop nulls in both dataframes (ie, drop any name that has no correspondance in both dataframes)
             dmerge = dmerge.dropna(how='any')
+            df1 = df1.loc[df1[col].isin(dmerge[col]),:]
+            df2 = df2.loc[df2[col].isin(dmerge[col+'2']),:]
         elif keep_nulls == 1:
+            # Keep nulls only in 1st dataframe (drop in second)
             dmerge = dmerge.dropna(how='any', subset=[col+'2'])
+            df2 = df2.loc[df2[col].isin(dmerge[col+'2']),:]
         elif keep_nulls == 2:
+            # Keep nulls only in 2nd dataframe (drop in first)
             dmerge = dmerge.dropna(how='any', subset=[col])
-        # Remap IDs
+            df1 = df1.loc[df1[col].isin(dmerge[col]),:]
+        # Remap IDs so that 2nd dataframe has same names as in 1st dataframe (to ease comparisons)
         df2 = df_remap_names(df2, dmerge, col, col+'2', keep_nulls=keep_nulls)
         del df2['index']
         # Merging databases
