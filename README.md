@@ -28,7 +28,7 @@ Here is the advised steps order for generating a clean unified database from Com
 8- optional: ecg_db_generator
 9- db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps)
 10- finaldbunification
-11- dicom2nifti_convert
+11- dicoms_to_nifti
 12- modular_reorganizer
 
 Tip: when you convert an input database from .xls or .xlsx (Excel) to csv format to be able to use these notebooks, please make sure to convert with a UTF-8 encoding and a CSV format that can store the BOM (eg, in Office Excel, choose "CSV (Comma delimited)" format when saving, and not "CSV (MS-DOS)" nor "CSV (Macintosh)").
