@@ -57,7 +57,8 @@ def _str(s):
     return str(s) if not isinstance(s, unicode) else s
 
 def save_dict_as_csv(d, output_file, fields_order=None, csv_order_by=None, verbose=False):
-    """Save a dict/list of dictionaries in a csv, with each key being a column"""
+    """Save a dict/list of dictionaries in a csv, with each key being a column
+    Note: Does NOT support unicode, nor quotes. See Python doc to get UnicodeWriter for unicode support (but quotes unsupport is due to inner working, can't fix that)"""
     # Define CSV fields order
     # If we were provided a fields_order list, we will show them first, else we create an empty fields_order
     if fields_order is None:
