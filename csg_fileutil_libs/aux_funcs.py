@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.0
+# v2.9.1
 #
 
 from __future__ import absolute_import
@@ -19,6 +19,7 @@ import unicodecsv as csv
 from collections import OrderedDict
 from .dateutil import parser as dateutil_parser
 from .distance import distance
+from .pydicom.filereader import InvalidDicomError
 
 import pandas as pd
 
