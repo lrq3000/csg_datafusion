@@ -18,18 +18,19 @@ Please place all original databases in a folder "databases_original". After runn
 
 Here is the advised steps order for generating a clean unified database from Coma Science Group multiple databases:
 
-1- extract_fields_from_reports
-2- optional: dicoms_reorganizer (to ensure there is no duplicates, else the dicom_to_nifti conversion and modular_reorganizer steps might become a headache + it will speed up calculations by removing duplicates)
-3- dicoms_extract
-4- fmp_db_cleaner
-5- sarah_db_cleaner
-6- stats_analysis_fmp_dicoms_db
-7- stats_analysis_fmp_dicoms_db_acute
-8- optional: ecg_db_generator
-9- db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps)
-10- finaldbunification
-11- dicoms_to_nifti
-12- modular_reorganizer
+1. extract_fields_from_reports
+2. optional: dicoms_reorganizer (to ensure there is no duplicates, else the dicom_to_nifti conversion and modular_reorganizer steps might become a headache + it will speed up calculations by removing duplicates)
+3. dicoms_extract
+4. fmp_db_cleaner
+5. sarah_db_cleaner
+6. stats_analysis_fmp_dicoms_db
+7. stats_analysis_fmp_dicoms_db_acute
+8. optional: ecg_db_generator
+9. db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps)
+10. finaldbunification
+11. dicoms_to_nifti
+12. optional: manual preprocess your data (eg, using [reorientation_registration_helper.py](https://github.com/lrq3000/csg_mri_pipelines/blob/master/utils/pathmatcher/reorientation_registration_helper.py) for fmri data)
+13. modular_reorganizer
 
 Bonus: dbconcat allows to concatenate (ie, append) 2 csv databases together, which circumvents the buggy concatenation in Microsoft Excel (which can lose the separator if the csv file is too long).
 
