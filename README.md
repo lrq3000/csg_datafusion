@@ -31,6 +31,8 @@ Here is the advised steps order for generating a clean unified database from Com
 11- dicoms_to_nifti
 12- modular_reorganizer
 
+Bonus: dbconcat allows to concatenate (ie, append) 2 csv databases together, which circumvents the buggy concatenation in Microsoft Excel (which can lose the separator if the csv file is too long).
+
 Tip: when you convert an input database from .xls or .xlsx (Excel) to csv format to be able to use these notebooks, please make sure to convert with a UTF-8 encoding and a CSV format that can store the BOM (eg, in Office Excel, choose "CSV (Comma delimited)" format when saving, and not "CSV (MS-DOS)" nor "CSV (Macintosh)").
 
 Tip2: the CSV files must use the semicolon ";" as a separator (and not the comma ",").
