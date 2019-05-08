@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.2
+# v2.9.3
 #
 
 from __future__ import absolute_import
@@ -1152,7 +1152,7 @@ def df_filter_nan_str(df_col):
 
 ######################## DICOMS #############################
 
-def generate_path_from_dicom_fields(output_dir, dcmdata, key_dicom_fields, cleanup_dicom_fields=True):
+def generate_path_from_dicom_fields(output_dir, dcmdata, key_dicom_fields, cleanup_dicom_fields=True, placeholder_value='unknown'):
     pathparts = []
     # For each outer list elements (will be concatenated with a directory separator like '/')
     for dfields in key_dicom_fields:
