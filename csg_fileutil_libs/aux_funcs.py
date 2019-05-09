@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.3
+# v2.9.4
 #
 
 from __future__ import absolute_import
@@ -114,7 +114,12 @@ def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_in
     for missing_field in sorted(d.columns):
         if missing_field not in fields_order_check:
             fields_order.append(missing_field)
-    d = d.reindex(columns=fields_order)  # Reindex in case we supplied an empty column
+    try:
+        d = d.reindex(columns=fields_order)  # Reindex in case we supplied an empty column
+    except ValueError as exc:
+        if verbose:
+            print('Warning: ValueError raised: %s' % exc)
+        pass
     if verbose:
         print('CSV fields order: '+str(fields_order))
     # Blank none values
@@ -330,7 +335,7 @@ def ordereddict_change_key(d, old, new):
         d2[new if old == k else k] = v
     return d2
 
-def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, fillna_exclude=None, join_on_shared_keys=True, verbose=False, **kwargs):
+def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=0.4, mode=0, skip_sanity=False, keep_nulls=True, returnmerged=False, keep_lastname_only=False, prependcols=None, fillna=False, fillna_exclude=None, join_on_shared_keys=True, squish=True, verbose=False, **kwargs):
     """Compute the remapping between two dataframes (or a single duplicated dataframe) based on one or multiple columns. Supports similarity matching (normalized character-wise AND words-wise levenshtein distance) for names, and date comparison using provided formatting.
     mode=0 is or test, 1 is and test. In other words, this is a join with fuzzy matching on one column (based on name/id) but supporting multiple columns with exact matching for the others.
     `keep_nulls=True` if you want to keep all records from both databases, False if you want only the ones that match both databases, 1 or 2 if you want specifically the ones that are in 1 or in 2
@@ -338,6 +343,7 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
     If `fillna=True`, subjects with multiple rows/sessions will be squashed and rows with missing infos will be completed from rows where the info is available (in case there are multiple information, they will all be present as a list). This is only useful when merging (and hence argument `col`) is multi-columns. The key columns are never filled, even if `fillna=True`.
     If `fillna_exclude` is specified with a list of columns, this list of columns won't be filled (particularly useful for dates).
     if `join_on_shared_keys=True`, if merging on multi-columns and not the same number of key columns are supplied, the merge will be done on only the shared keys in both dataframes: this is very convenient to allow to groupby in one dataframe according to some keys but not in the other one (eg, one is grouped by name and date so both are kept, while the other one is only grouped by name).
+    if `squish=True`, the dataframes are each squished on key columns to make them unique, so that other non-key columns will get concatenated values. True by default, but if you have to non overlapping databases, then you can set this to False to keep all rows.
     """
     ### Preparing the input dataframes
     # If the key column is in fact a list of columns (so we will merge on multiple columns), we first extract and rename the id columns for ease
@@ -370,8 +376,9 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
     #if keycol:  # lowercase also the other key columns
         #keycol = [OrderedDict([(k.lower(), v) for k,v in kcol.items()]) for kcol in keycol]
     # drop all rows where all cells are empty or where name is empty (necessary else this will produce an error, we expect the name to exist)
-    df1 = df1.dropna(how='all').dropna(how='any', subset=[col])
-    df2 = df2.dropna(how='all').dropna(how='any', subset=[col])
+    if squish:
+        df1 = df1.dropna(how='all').dropna(how='any', subset=[col])
+        df2 = df2.dropna(how='all').dropna(how='any', subset=[col])
     # Rename all columns if user wants, except the key columns (else the merge would not work) - this is an alternative to automatic column renaming in case of conflict
     if prependcols is not None and len(prependcols) == 2:
         if keycol:
@@ -416,6 +423,7 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
     # Find all similar names in df2 compared to df1 (missing names will be None)
     for c in _tqdm(list_names1, total=len(df1[col].unique()), desc='MERGE'):
         found = False
+        c = str(c)
         if dist_threshold <= 0.0 and dist_words_threshold <= 0.0:
             # No fuzzy matching, we simply compute equality
             if c in list_names2:
@@ -426,6 +434,7 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
             for cd in list_names2:
                 if not cd:
                     continue
+                cd = str(cd)
                 # Clean up the names
                 name1 = cleanup_name(replace_buggy_accents(c))
                 name2 = cleanup_name(replace_buggy_accents(cd))
@@ -486,15 +495,17 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
         if keycol is None:
             # Simple merging on one key column (name usually)
             # Concatenate all rows into one per gupi
-            df1 = df_concatenate_all_but(df1, col, setindex=False)
-            df2 = df_concatenate_all_but(df2, col, setindex=False)
+            if squish:
+                df1 = df_concatenate_all_but(df1, col, setindex=False)
+                df2 = df_concatenate_all_but(df2, col, setindex=False)
             # Final merge of all columns
             dfinal = pd.merge(df1, df2, how='outer', on=col)
         else:
             # More complex merging on multiple key columns
             # Concatenate all rows into one per key columns (ie, we aggregate on the key columns)
-            df1 = df_concatenate_all_but(df1, keycol[0].keys(), setindex=False)
-            df2 = df_concatenate_all_but(df2, keycol[1].keys(), setindex=False)
+            if squish:
+                df1 = df_concatenate_all_but(df1, keycol[0].keys(), setindex=False)
+                df2 = df_concatenate_all_but(df2, keycol[1].keys(), setindex=False)
             # Preprocessing key columns with specific datatypes (eg, datetime), else they won't be comparable across the two input DataFrames
             for dfid, kcol in zip([1, 2], keycol):  # for each dataframe and the corresponding key columns list
                 for colname, coltype in kcol.items():  # loop through each key column for this dataframe
@@ -515,10 +526,17 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
                 keycol_shared = []
                 for k in keycol[0].keys():
                     for k2 in keycol[1].keys():
+                        # If column name is the same, we add this column in the list of shared ones
                         if k == k2:
                             keycol_shared.append(k)
                 # Merge on shared keys only
-                dfinal = pd.merge(df1, df2, how='outer', on=keycol_shared, **kwargs)
+                if keycol_shared:
+                    dfinal = pd.merge(df1, df2, how='outer', on=keycol_shared, **kwargs)
+                else:
+                    # Fallback to merge on the first x columns (positional merging)
+                    # TODO: this does NOT work because higher in func we replace the name of 2nd dataframe key column in case they are mismatched. Thus, this branch is never called. The old/current solution works for one column, but not if we have multiple, positional merging is a more elegant and flexible solution, but need to fix this old code above before.
+                    keycol_shared_len = min(len(keycol[0]), len(keycol[1]))
+                    dfinal = pd.merge(df1, df2, how='outer', left_on=keycol[0].keys()[:keycol_shared_len], right_on=keycol[0].keys()[:keycol_shared_len], **kwargs)
             else:
                 raise ValueError('To merge two dataframes on multiple keys, you need to provide the same number of keys with the same types (but not necessarily the same names) for both dataframes! Or you can enable join_on_shared_key=True to do a partial merge on the keys that are shared (then it is based on sharing the same column name - the id columns should have the same name internally in any case).')
             # Filling gaps by squashing per subject id and trying to fill the missing fields from another row of the same subject where the information is present
@@ -648,10 +666,11 @@ def find_columns_matching(df, L, startswith=False):
 
 def reorder_cols_df(df, cols):
     """Reorder the columns of a DataFrame to start with the provided list of columns"""
+    cols2 = [c for c in cols if c in df.columns.tolist()]
     cols_without = df.columns.tolist()
-    for col in cols:
+    for col in cols2:
         cols_without.remove(col)
-    return df[cols + cols_without]
+    return df[cols2 + cols_without]
 
 def df_remap_names(df, dfremap, col='name', col2='name2', keep_nulls=False):
     """Remap names in a dataframe using a remapping list (ie, a dataframe with two names columns)"""
@@ -688,7 +707,7 @@ def df_drop_duplicated_index(df):
 def cleanup_name_df(df, col='name'):
     """Cleanup the name field of a dataframe"""
     df2 = df.copy()
-    df2[col] = df2[col].apply(lambda name: cleanup_name(name))
+    df2[col] = df2[col].astype('str').apply(lambda name: cleanup_name(name))
     return df2
     #for c in df2.itertuples():  # DEPRECATED: itertuples() is limited to 255 columns in Python < 3.7, prefer to avoid this approach
     #    try:
