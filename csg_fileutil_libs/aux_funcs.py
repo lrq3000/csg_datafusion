@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.4
+# v2.9.5
 #
 
 from __future__ import absolute_import
@@ -423,7 +423,7 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
     # Find all similar names in df2 compared to df1 (missing names will be None)
     for c in _tqdm(list_names1, total=len(df1[col].unique()), desc='MERGE'):
         found = False
-        c = str(c)
+        #c = str(c)
         if dist_threshold <= 0.0 and dist_words_threshold <= 0.0:
             # No fuzzy matching, we simply compute equality
             if c in list_names2:
@@ -434,7 +434,7 @@ def merge_two_df(df1, df2, col='Name', dist_threshold=0.2, dist_words_threshold=
             for cd in list_names2:
                 if not cd:
                     continue
-                cd = str(cd)
+                #cd = str(cd)
                 # Clean up the names
                 name1 = cleanup_name(replace_buggy_accents(c))
                 name2 = cleanup_name(replace_buggy_accents(cd))
@@ -707,7 +707,10 @@ def df_drop_duplicated_index(df):
 def cleanup_name_df(df, col='name'):
     """Cleanup the name field of a dataframe"""
     df2 = df.copy()
-    df2[col] = df2[col].astype('str').apply(lambda name: cleanup_name(name))
+    try:
+        df2[col] = df2[col].astype('str').apply(lambda name: cleanup_name(name))
+    except UnicodeEncodeError as exc:
+        df2[col] = df2[col].astype('unicode').apply(lambda name: cleanup_name(name))
     return df2
     #for c in df2.itertuples():  # DEPRECATED: itertuples() is limited to 255 columns in Python < 3.7, prefer to avoid this approach
     #    try:
