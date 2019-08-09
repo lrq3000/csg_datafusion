@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.5
+# v2.9.6
 #
 
 from __future__ import absolute_import
@@ -12,6 +12,7 @@ from __future__ import absolute_import
 import ast
 import chardet
 import copy
+import numbers
 import os
 import re
 import shutil
@@ -603,14 +604,17 @@ def remove_strings_from_df(df):
             return False
     return df[df.applymap(isnumber)].applymap(float)
 
-def concat_vals(x):
-    """Concatenate after a groupby values in a list, and keep the same order (except if all values are the same or null, then return a singleton). This is similar to groupby(col).agg(list) but this function returns a singleton whenever possible (for readability)."""
+def concat_vals(x, aggfunc=None):
+    """Concatenate after a groupby values in a list, and keep the same order (except if all values are the same or null, then return a singleton). This is similar to groupby(col).agg(list) but this function returns a singleton whenever possible (for readability).
+    Optionally can provide an aggfunc that will be applied to select only one value (eg, max)."""
     try:
         x = list(x)
         if len(sort_and_deduplicate(x)) == 1:
             x = x[0]
-        elif len([y for y in x if (isinstance(y, list) or not pd.isnull(y)) and (hasattr(y, '__len__') and len(y) > 0)]) == 0:
+        elif len([y for y in x if ((isinstance(y, list) or not pd.isnull(y)) and (hasattr(y, '__len__') and len(y) > 0)) or isinstance(y, numbers.Number)]) == 0:
             x = None
+        if aggfunc is not None:
+            x = aggfunc(x)
     except Exception as exc:
         # Warning: pd.groupby().agg(concat_vals) can drop columns without a notice if an exception happens during the execution of the function
         print('Warning: aggregation using concat_vals() met with an exception, at least one column will be dropped!')
@@ -618,15 +622,18 @@ def concat_vals(x):
         raise
     return x
 
-def concat_vals_unique(x):
+def concat_vals_unique(x, aggfunc=None):
     """Concatenate after a groupby values in a list (if not null and not unique, else return the singleton value)
+    Optionally can provide an aggfunc that will be applied to select only one value (eg, max).
     Please make sure your DataFrame contains only unique columns, else you might get a weird error: https://stackoverflow.com/questions/27719407/pandas-concat-valueerror-shape-of-passed-values-is-blah-indices-imply-blah2"""
     try:
-        x = list(sort_and_deduplicate([y for y in x if (isinstance(y, list) or not pd.isnull(y)) and (hasattr(y, '__len__') and len(y) > 0)]))
+        x = list(sort_and_deduplicate([y for y in x if ((isinstance(y, list) or not pd.isnull(y)) and (hasattr(y, '__len__') and len(y) > 0)) or isinstance(y, numbers.Number)]))
         if len(x) == 1:
             x = x[0]
         elif len(x) == 0:
             x = None
+        if aggfunc is not None:
+            x = aggfunc(x)
     except Exception as exc:
         # Warning: pd.groupby().agg(concat_vals) can drop columns without a notice if an exception happens during the execution of the function
         print('Warning: aggregation using concat_vals_unique() met with an exception, at least one column will be dropped!')
