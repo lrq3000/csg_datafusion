@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.6
+# v2.9.7
 #
 
 from __future__ import absolute_import
@@ -613,7 +613,7 @@ def concat_vals(x, aggfunc=None):
             x = x[0]
         elif len([y for y in x if ((isinstance(y, list) or not pd.isnull(y)) and (hasattr(y, '__len__') and len(y) > 0)) or isinstance(y, numbers.Number)]) == 0:
             x = None
-        if aggfunc is not None:
+        if aggfunc is not None and isinstance(x, list):
             x = aggfunc(x)
     except Exception as exc:
         # Warning: pd.groupby().agg(concat_vals) can drop columns without a notice if an exception happens during the execution of the function
@@ -632,7 +632,7 @@ def concat_vals_unique(x, aggfunc=None):
             x = x[0]
         elif len(x) == 0:
             x = None
-        if aggfunc is not None:
+        if aggfunc is not None and isinstance(x, list):
             x = aggfunc(x)
     except Exception as exc:
         # Warning: pd.groupby().agg(concat_vals) can drop columns without a notice if an exception happens during the execution of the function
