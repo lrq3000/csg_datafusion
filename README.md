@@ -31,12 +31,15 @@ Here is the advised steps order for generating a clean unified database from Com
 11. dicoms_to_nifti
 12. optional: manual preprocess your data (eg, using [reorientation_registration_helper.py](https://github.com/lrq3000/csg_mri_pipelines/blob/master/utils/pathmatcher/reorientation_registration_helper.py) for fmri data)
 13. modular_reorganizer
+14. db_merger again to merge in the post-nifti conversion additional infos (movement parameters, any quality assurance demographics file you made, etc)
 
 Bonus: dbconcat allows to concatenate (ie, append) 2 csv databases together, which circumvents the buggy concatenation in Microsoft Excel (which can lose the separator if the csv file is too long).
 
 Tip: when you convert an input database from .xls or .xlsx (Excel) to csv format to be able to use these notebooks, please make sure to convert with a UTF-8 encoding and a CSV format that can store the BOM (eg, in Office Excel, choose "CSV (Comma delimited)" format when saving, and not "CSV (MS-DOS)" nor "CSV (Macintosh)").
 
 Tip2: the CSV files must use the semicolon ";" as a separator (and not the comma ",").
+
+This whole process might seem overwhelming, but a BIG advantage lies in its modularity: if you need to update a specific part (let's say add more calculations on diagnoses dates, or rewrite how final diagnoses are computed, or add a new demographics file source, etc), you can do so without having to recompute everything from the start, you mostly need to update the appropriate notebook or create a new one to add the data you want if it's a calculation (else you don't need to), and then use db_merger to unify into a single database file. Thus, this project was built in such a way as to allow selective updating of precise parts of the pipeline and of the final database, without having to recompute everything, which saves a substantial amount of time (both in calculation and in development).
 
 ## Requirements
 For all notebooks:
