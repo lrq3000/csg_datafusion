@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.7
+# v2.9.8
 #
 
 from __future__ import absolute_import
@@ -299,11 +299,17 @@ def cleanup_name(s, encoding=None, normalize=True, clean_nonletters=True):
 def compute_best_diag(serie, diag_order=None, persubject=True):
     """Convert a serie to a categorical type and extract the best diagnosis for each subject (patient name must be set as index level 0)
     Note: case insensitive and strip spaces automatically
-    Set persubject to None if you want to do the max or min yourself (this will return the Series configured with discrete datatype)"""
+    Set persubject to None if you want to do the max or min yourself (this will return the Series configured with discrete datatype),
+    in this case, do NOT use `max(compute_best_diag(etc..))`, which will output a random value, but rather `compute_best_diag(etc..).max()` (pandas max instead of python native max) which will give you the correct maximum given your specified diag_order."""
+    if isinstance(serie, basestring):
+        return serie
     if diag_order is None:
         diag_order = ['coma', 'vs/uws', 'mcs', 'mcs-', 'mcs+', 'emcs', 'lis']  # from least to best
     # Convert to lowercase
     diag_order = [x.lower().strip() for x in diag_order]
+    # Convert to a serie if a simple list (which will give us access to CategoricalDtype)
+    if isinstance(serie, list):
+        serie = pd.Series(serie)
     # Check if our list of diagnosis covers all possible in the database, else raise an error
     possible_diags = serie.str.lower().str.strip().dropna().unique()
     # If unicode, we convert the diag_order to unicode
