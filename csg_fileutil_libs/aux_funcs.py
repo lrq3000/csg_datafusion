@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.9
+# v2.9.10
 #
 
 from __future__ import absolute_import
@@ -1184,6 +1184,12 @@ def filter_nan_str(x):
 def df_filter_nan_str(df_col):
     """Filter all 'nan' values as strings from a Dataframe column containing lists"""
     return df_col.apply(df_literal_eval).apply(filter_nan_str).astype('str')
+
+def df_squash_lists(df_col, func=None):
+    """Filter lists enclosed in Dataframe column by first evaluating the strings as a list and then applying the supplied function to choose which element to return"""
+    if func is None:
+        func = lambda x: next(iter(x))
+    return df_col.apply(df_literal_eval).apply(lambda x: func(x) if isinstance(x, (list, set, tuple)) else x).astype('str')
 
 
 ######################## DICOMS #############################
