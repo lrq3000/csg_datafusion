@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.8
+# v2.9.9
 #
 
 from __future__ import absolute_import
@@ -307,13 +307,13 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         diag_order = ['coma', 'vs/uws', 'mcs', 'mcs-', 'mcs+', 'emcs', 'lis']  # from least to best
     # Convert to lowercase
     diag_order = [x.lower().strip() for x in diag_order]
-    # Convert to a serie if a simple list (which will give us access to CategoricalDtype)
-    if isinstance(serie, list):
-        serie = pd.Series(serie)
+    # Convert to a serie if given a simple list (which will give us access to CategoricalDtype) or if None (so that the rest of the function can work and return an expected Series)
+    if isinstance(serie, list) or serie is None:
+        serie = pd.Series(serie, dtype='str')
     # Check if our list of diagnosis covers all possible in the database, else raise an error
     possible_diags = serie.str.lower().str.strip().dropna().unique()
     # If unicode, we convert the diag_order to unicode
-    if isinstance(possible_diags[0].lower().strip(), unicode):
+    if len(serie) > 0 and isinstance(possible_diags[0].lower().strip(), unicode):
         diag_order = list_to_unicode(diag_order)
     try:
         assert not set([x.lower().strip() for x in possible_diags]) - set([x.lower().strip() for x in diag_order])
@@ -323,6 +323,7 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
     #for subjname, d in cf_crsr_all.groupby(level=0):
     #    print(d['CRSr::Computed Outcome'])
 
+    # Implement the CategoricalDtype and return the resulting Series
     if persubject:
         # Return one result per patient
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).max(level=0)
