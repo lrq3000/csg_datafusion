@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.10
+# v2.9.11
 #
 
 from __future__ import absolute_import
@@ -1013,8 +1013,13 @@ def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False, decode_if_e
         df.set_index(idxbak, inplace=True)
     return df
 
-def df_literal_eval(x):
-    """Evaluate each string cell of a DataFrame as if it was a Python object, and return the Python object"""
+def df_literal_eval(xin, aggressive=False):
+    """Evaluate each string cell of a DataFrame as if it was a Python object, and return the Python object
+    aggressive=True makes the algorithm remove any list separator beforehand to separate the contained items to the maximum, this allows working with nested lists for instance"""
+    if aggressive:
+        x = str(xin).replace('[', '').replace(']', '').replace('{', '').replace('}', '').replace("'", '')
+    else:
+        x = xin
     try:
         # Try to evaluate using ast
         return(ast.literal_eval(x))
@@ -1027,7 +1032,7 @@ def df_literal_eval(x):
             # TODO: implement a real parser using pyparser: https://stackoverflow.com/a/1894785
         except Exception as exc:
             # Else simply return the item as-is
-            return x
+            return xin
 
 def df_cols_lower(df_in, col='name'):
     """Find in a DataFrame any column matching the col argument in lowercase and rename all found columns to lowercase"""
@@ -1185,10 +1190,13 @@ def df_filter_nan_str(df_col):
     """Filter all 'nan' values as strings from a Dataframe column containing lists"""
     return df_col.apply(df_literal_eval).apply(filter_nan_str).astype('str')
 
-def df_squash_lists(df_col, func=None):
+def df_squash_lists(df_col, func=None, aggressive=False):
     """Filter lists enclosed in Dataframe column by first evaluating the strings as a list and then applying the supplied function to choose which element to return"""
     if func is None:
+        # By default, take the first item when squashing
         func = lambda x: next(iter(x))
+    if aggressive:
+        df_col = df_col.astype('str').str.replace("[\[\]{}']", '')
     return df_col.apply(df_literal_eval).apply(lambda x: func(x) if isinstance(x, (list, set, tuple)) else x).astype('str')
 
 
