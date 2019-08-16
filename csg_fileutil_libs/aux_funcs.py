@@ -4,7 +4,7 @@
 # Auxiliary functions library for data fusion from reports extractor, dicoms handling, etc
 # Copyright (C) 2017-2019 Stephen Karl Larroque
 # Licensed under MIT License.
-# v2.9.11
+# v2.9.12
 #
 
 from __future__ import absolute_import
@@ -1190,14 +1190,22 @@ def df_filter_nan_str(df_col):
     """Filter all 'nan' values as strings from a Dataframe column containing lists"""
     return df_col.apply(df_literal_eval).apply(filter_nan_str).astype('str')
 
-def df_squash_lists(df_col, func=None, aggressive=False):
+def df_squash_lists(df_col_in, func=None, aggressive=False):
     """Filter lists enclosed in Dataframe column by first evaluating the strings as a list and then applying the supplied function to choose which element to return"""
     if func is None:
         # By default, take the first item when squashing
         func = lambda x: next(iter(x))
+    df_col = df_col_in.copy()
     if aggressive:
         df_col = df_col.astype('str').str.replace("[\[\]{}']", '')
     return df_col.apply(df_literal_eval).apply(lambda x: func(x) if isinstance(x, (list, set, tuple)) else x).astype('str')
+
+def df_fillnastr(df_col_in, replacement=None):
+    """Replace null values hidden in strings with the provided replacement value"""
+    df_col = df_col_in.copy()
+    df_col[df_col.isna() | (df_col == 'None') | (df_col == 'NONE') | (df_col == 'none') | (df_col == 'NaN') | (df_col == 'nan') | (df_col == 'NaT') | (df_col == 'nat') | (df_col == 'na') | (df_col == 'NA') | (df_col == 'N/A') | (df_col == '#VALUE!')] = replacement
+    return df_col
+
 
 
 ######################## DICOMS #############################
