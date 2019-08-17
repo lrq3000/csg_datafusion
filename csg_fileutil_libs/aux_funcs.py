@@ -102,7 +102,7 @@ def save_df_as_csv(d, output_file, fields_order=None, csv_order_by=None, keep_in
     csv_order_by allows to order rows according to the alphabetical order of the specified column(s)
     keep_index will save rows indices in the csv if True
     blankna fills None, NaN and NaT with an empty string ''. This can be useful for 2 purposes: 1) more human readability, 2) pandas will more easily understand a field is empty, even if the correct datatype is not set (eg, datetime null value is NaT, but at loading the column will be type 'object' which means NaT values won't be considered null). Note however that if you want to use date_format or float_format or decimal options of pd.to_csv(), they will not work since the columns datatypes will be converted to object/string.
-    Encoding is by default 'utf-8-sig', which is UTF-8 with an encoding BOM in the file's header, this is necessary for Excel 2007 to correctly read the file (else it assumes latin-1): 
+    Encoding is by default 'utf-8-sig', which is UTF-8 with an encoding BOM in the file's header, this is necessary for Excel 2007 to correctly read the file (else it assumes latin-1):
     If excel is True, will save as an excel file (which better supports accentuated/special characters).
     Combine with df_to_unicode() or df_to_unicode_fast() in case of encoding issues.
     """
@@ -217,7 +217,7 @@ def recwalk(inputpath, sorting=True, folders=False, topdown=True, filetype=None)
         yield os.path.dirname(abs_path), os.path.basename(abs_path)
     # Else if it's a folder, walk recursively and return every files
     else:
-        for dirpath, dirs, files in walk(inputpath, topdown=topdown):	
+        for dirpath, dirs, files in walk(inputpath, topdown=topdown):
             if sorting:
                 files.sort()
                 dirs.sort()  # sort directories in-place for ordered recursive walking
@@ -334,7 +334,7 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
     else:
         # If None, just return the Serie as-is, and the user can do .max() or .min() or whatever
-		return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True))
+        return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True))
 
 def ordereddict_change_key(d, old, new):
     """Rename the key of an ordered dict without changing the order"""
