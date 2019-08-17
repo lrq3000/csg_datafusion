@@ -8,6 +8,8 @@
 #
 
 from __future__ import absolute_import
+from __future__ import print_function
+from __future__ import unicode_literals
 
 import ast
 import chardet
@@ -799,7 +801,7 @@ def disambiguate_names(df, dist_threshold=0.2, col='name', verbose=False): # TOD
             if c[col] != c2[col] and \
             (distance.nlevenshtein(c[col], c2[col], method=1) <= dist_threshold or distance_jaccard_words_split(c2[col], c[col], partial=False, norm=True, dist=dist_threshold) <= dist_threshold): # use shortest distance with normalized levenshtein
                 if verbose:
-                    print(c[col], c2[col], c2index, distance.nlevenshtein(c[col], c2[col], method=1))
+                    print((c[col], c2[col], c2index, distance.nlevenshtein(c[col], c2[col], method=1)))
                 # Replace the name of the second entry with the name of the first entry
                 df2.loc[c2index, col] = c[col]
                 # Add the other name as an alternative name, just in case we did a mistake for example
