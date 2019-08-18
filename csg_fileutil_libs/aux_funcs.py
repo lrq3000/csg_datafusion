@@ -11,6 +11,13 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import unicode_literals
 
+from future import standard_library
+standard_library.install_aliases()
+from builtins import next
+from builtins import zip
+from builtins import str
+from builtins import range
+from past.builtins import basestring
 import ast
 import chardet
 import copy
@@ -53,13 +60,13 @@ except ImportError as exc:
         return kwargs.get('iterable', None)
 
 try:
-    from StringIO import StringIO as _StringIO
+    from io import StringIO as _StringIO
 except ImportError as exc:
     from io import StringIO as _StringIO
 
 def _str(s):
     """Convert to str only if the object is not unicode"""
-    return str(s) if not isinstance(s, unicode) else s
+    return str(s) if not isinstance(s, str) else s
 
 def save_dict_as_csv(d, output_file, fields_order=None, csv_order_by=None, verbose=False):
     """Save a dict/list of dictionaries in a csv, with each key being a column
@@ -158,8 +165,8 @@ def distance_jaccard_words(seq1, seq2, partial=False, norm=False, dist=0, minlen
     @param norm [True/False/None] True to get normalized result (number of equal words divided by total words count from both), False to get the number of different words, None to get the number of equal words.
     @param minlength int Minimum number of caracters to allow comparison and matching between words (else a word smaller than this will be a 'dead weight' if norm=True in the sense that it will still be accounted in the total but cannot be matched)"""
     # The goal was to have a distance on words that 1- is insensible to permutation ; 2- returns 0.2 or less if only one or two words are different, except if one of the lists has only one entry! ; 3- insensible to shortened name ; 4- allow for similar but not totally exact words.
-    seq1_c = filter(None, list(seq1))
-    seq2_c = filter(None, list(seq2))
+    seq1_c = [_f for _f in list(seq1) if _f]
+    seq2_c = [_f for _f in list(seq2) if _f]
     count_total = len(seq1_c) + len(seq2_c)
     count_eq = 0
     for s1 in seq1_c:
@@ -272,7 +279,7 @@ def replace_buggy_accents(s, encoding=None):
         '’': '\'',
     }
     # Convert the patterns to unicode if the input is a unicode string
-    if isinstance(s, unicode):
+    if isinstance(s, str):
         dic_replace = {k.decode('utf-8'): v.decode('utf-8') for k,v in dic_replace.items()}
     # Replace each pattern with its correct counterpart
     for pat, rep in dic_replace.items():
@@ -284,7 +291,7 @@ def replace_buggy_accents(s, encoding=None):
 
 def cleanup_name(s, encoding=None, normalize=True, clean_nonletters=True):
     """Clean a name and remove accentuated characters"""
-    if not isinstance(s, unicode):
+    if not isinstance(s, str):
         # Decode only if the input string is not already unicode (decoding is from str to unicode, encoding is from unicode to str)
         if encoding is None:
             encoding = chardet.detect(s)['encoding']
@@ -315,7 +322,7 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
     # Check if our list of diagnosis covers all possible in the database, else raise an error
     possible_diags = serie.str.lower().str.strip().dropna().unique()
     # If unicode, we convert the diag_order to unicode
-    if len(serie) > 0 and isinstance(possible_diags[0].lower().strip(), unicode):
+    if len(serie) > 0 and isinstance(possible_diags[0].lower().strip(), str):
         diag_order = list_to_unicode(diag_order)
     try:
         assert not set([x.lower().strip() for x in possible_diags]) - set([x.lower().strip() for x in diag_order])
@@ -331,7 +338,7 @@ def compute_best_diag(serie, diag_order=None, persubject=True):
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).max(level=0)
     elif persubject is False:
         # Respect the original keys and return one result for each key (can be multilevel, eg subject + date)
-        return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=range(serie.index.nlevels)).max()
+        return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True)).groupby(level=list(range(serie.index.nlevels))).max()
     else:
         # If None, just return the Serie as-is, and the user can do .max() or .min() or whatever
         return serie.str.lower().str.strip().astype(pd.api.types.CategoricalDtype(categories=diag_order, ordered=True))
@@ -666,11 +673,11 @@ def sort_and_deduplicate(l):
 
 def concat_strings(serie, prefix='', sep=''):
     """Concatenate multiple columns as one string. Can add a prefix to make sure Pandas saves the column as a string (and does not trim leading 0)"""
-    return prefix+sep.join([x if isinstance(x, (str,unicode)) else str(int(x)) if not pd.isnull(x) else '' for x in serie])
+    return prefix+sep.join([x if isinstance(x, (str,str)) else str(int(x)) if not pd.isnull(x) else '' for x in serie])
 
 def find_columns_matching(df, L, startswith=False):
     """Find all columns of a DataFrame matching one string of the given list (case insensitive)"""
-    if isinstance(L, (str,unicode)):
+    if isinstance(L, (str,str)):
         L = [L]
     L = [l.lower() for l in L]
     matching_columns = []
@@ -747,7 +754,7 @@ def cleanup_name_customregex(cname, customregex=None, returnmatches=False):
                       }
     matches = set()
     # For each pattern
-    for pattern, replacement in customregex.iteritems():
+    for pattern, replacement in customregex.items():
         # First try to see if there is a match and store it if yes
         if returnmatches:
             m = re.search(pattern, cname, flags=re.I)
@@ -834,7 +841,7 @@ def dict_to_unicode(d):
 
 def list_to_unicode(l):
     """Convert the items of a list of str string into unicode"""
-    return [unicode(x.decode(encoding=chardet.detect(x)['encoding'])) if not isinstance(x, unicode) else x for x in l]
+    return [str(x.decode(encoding=chardet.detect(x)['encoding'])) if not isinstance(x, str) else x for x in l]
 
 def string_to_unicode(s, failsafe_encoding='iso-8859-1', skip_errors=False):
     """Ensure unicode encoding for one string.
@@ -844,7 +851,7 @@ def string_to_unicode(s, failsafe_encoding='iso-8859-1', skip_errors=False):
     """
     try:
         # Try default unidecode
-        s = unicode(s)
+        s = str(s)
     except UnicodeDecodeError as exc:
         # If fail, we use the failsafe encoding
         try:
@@ -852,7 +859,7 @@ def string_to_unicode(s, failsafe_encoding='iso-8859-1', skip_errors=False):
         except UnicodeDecodeError as exc2:
             # At worst, we can just skip errors (and unrecognized characters)
             if skip_errors:
-                s = unicode(s, errors='ignore')
+                s = str(s, errors='ignore')
             else:
                 raise
     return s
@@ -877,7 +884,7 @@ def df_to_unicode(df_in, cols=None, failsafe_encoding='iso-8859-1', skip_errors=
     # Which columns do we have to unidecode?
     if cols is None:  # by default, all!
         # Ensure column names are unicode
-        df.columns = [unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
+        df.columns = [str(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
         # By default, take all columns
         cols = df.columns
     # Calculate total number of items
@@ -918,7 +925,7 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False,
     # Which columns do we have to unidecode?
     if cols is None:  # by default, all!
         # Ensure column names are unicode
-        df.columns = [unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
+        df.columns = [str(cleanup_name(x, normalize=False, clean_nonletters=False), errors='ignore') for x in df.columns]
         # Use the new column names
         cols = df.columns
     if skip_errors:
@@ -936,7 +943,7 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False,
             #encoding = chardet.detect(''.join(df.loc[:, col]))['encoding']
             allvals = (x if isinstance(x, basestring) else str(x) for _, x in df.loc[:, col].items())
             allvalsjoined = ''.join(allvals)
-            if isinstance(allvalsjoined, unicode):  # if unicode, skip decoding
+            if isinstance(allvalsjoined, str):  # if unicode, skip decoding
                 encoding = None
             else:
                 encoding = chardet.detect(allvalsjoined)['encoding']
@@ -948,7 +955,7 @@ def df_to_unicode_fast(df_in, cols=None, replace_ascii=False, skip_errors=False,
             try:
                 # If decoding failed, we can try to replace the special characters with their closest ASCII counterpart (via unidecode)
                 if replace_ascii:
-                    df.loc[:, col] = df.loc[:, col].apply(lambda x: unicode(cleanup_name(x, normalize=False, clean_nonletters=False), errors=serrors) if isinstance(x, str) else x)
+                    df.loc[:, col] = df.loc[:, col].apply(lambda x: str(cleanup_name(x, normalize=False, clean_nonletters=False), errors=serrors) if isinstance(x, str) else x)
                     #df.loc[:, col] = df.loc[:, col].astype('unicode')  # DEPRECATED: works but if we do this, all null values (nan, nat, etc) will be converted to strings and become very difficult to process (eg, not detectable using pd.isnull())!
                 else:
                     raise
@@ -992,10 +999,10 @@ def df_encode(df_in, cols=None, encoding='utf-8', skip_errors=False, decode_if_e
     for col in cols:
         for idx in df[col].index:
             # Unidecode if value is a string
-            if isinstance(df.loc[idx,col], (basestring, unicode)):
+            if isinstance(df.loc[idx,col], (basestring, str)):
                 try:
                     # Try to encode to utf-8, but only if it is unicode
-                    if isinstance(df.loc[idx,col], unicode):
+                    if isinstance(df.loc[idx,col], str):
                         df.loc[idx,col] = df.loc[idx,col].encode(encoding)
                     elif decode_if_errors:
                         df.loc[idx,col] = string_to_unicode(df.loc[idx,col]).encode(encoding)
