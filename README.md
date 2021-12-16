@@ -60,3 +60,11 @@ Other necessary libraries such as pydicom (git revision 356a51ab4bc54fd18950041e
 
 ## License
 MIT License (see file LICENSE) for the notebooks and csg_fileutil_libs/aux_funcs.py, the rest in csg_fileutil_libs subfolders have their own licenses, compatible with the MIT.
+
+## Similar projects
+
+This is an addendum on December 2021. It appears what this set of notebooks does is more formally called deduplication by record linkage (comparison of fields between the same on between documents) and fuzzy matching (name deduplication by a modified Hamming distance metric).
+
+There are now other projects that are available to achieve a similar goal, including merging different files together, although they rely on a different method, leveraging machine learning, which confers them more flexibility at the expense of more calibration required beforehand and a higher risk of uncontrolled false positives/negatives:
+
+* [Dedupe Python package](https://github.com/dedupeio/dedupe). An already trained machine learning model is available on dedupe.io for a fee, a [python module](https://github.com/Lyonk71/pandas-dedupe) exists to use this online model. See this [talk](https://www.youtube.com/watch?v=McsTWXeURhA) for more details on how deduplication by record linkage via machine learning works.
