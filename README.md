@@ -3,32 +3,37 @@
 This toolset provide several tools to unify databases from multiple sources (data fusion).
 
 What this toolset can do:
-* Data extraction from multiple unformatted and formatted heterogenous data sources (pdf, excel, doc, docx, MRI DICOMs).
-* Data cleaning, such as unreadable characters, redundant data and names, and detection and removal of impossible data such as [impossible or improbable CRS-R scores](https://pubmed.ncbi.nlm.nih.gov/26944708/).
-* Data disambiguation using fuzzy name matching with custom distance metrics.
-* Databases realignment and joining using relational databases rules (the toolset assumes only two fields are present: name and final_diagnosis, all other fields are dynamically accounted for). This is similar to the rationale that motivated the [tidy data paper by Wickham](https://doi.org/10.18637/jss.v059.i10), although the author did not know of it at the time, so this toolset likely is tidy compatible, and it generates tidy-like data.
+* **Data extraction** from multiple unformatted and formatted heterogenous data sources (pdf, excel, doc, docx, MRI DICOMs).
+* **Data cleaning**, such as unreadable characters and redundant fields, and detection and removal of impossible data such as [impossible or improbable CRS-R scores](https://pubmed.ncbi.nlm.nih.gov/26944708/).
+* **Data disambiguation and deduplication** using **fuzzy name matching** with custom distance metrics.
+* **Databases realignment** and joining using relational databases rules (the toolset assumes only two fields are present: name and final_diagnosis, all other fields are dynamically accounted for). This is similar to the rationale that motivated the [tidy data paper by Wickham](https://doi.org/10.18637/jss.v059.i10), although the author did not know of it at the time, so this toolset likely is tidy compatible, accepts untidy data as input and then outputs tidy-like data.
 * A Dicoms to Nifti batch convertor, using external tools. This allows to convert in a standardardized layout, then you can do manual preprocessing once and for all on the whole NIFTI files database, and finally you can use the data selector to extract sub-populations anytime you want later, without having to redo the manual preprocessing steps.
-* Data selector with complex rules, similarly to SQL in relational databases but using dataframes and Python.
+* **Data selector** with freeform rules, similarly to SQL in relational databases but using dataframes and Python.
 
 ## Usage and steps order
 Please place all original databases in a folder "databases_original". After running each step, please move all generated databases into a folder "databases_output".
 
-Here is the advised steps order for generating a clean unified database from Coma Science Group multiple databases:
+Here is the advised steps order for generating a clean unified database from Coma Science Group multiple databases, organized by the type of step:
 
-1. extract_fields_from_reports
+Inputs extractor and tidying:
+1. extract_fields_from_reports. Extracts a CSV database out of PDF files. The rules are very specific to our own set of PDFs, but the base functions to loop read digitalized and non-digitalized (ie, via OCR) PDF files can easily be re-used.
 2. optional: dicoms_reorganizer (to ensure there is no duplicates, else the dicom_to_nifti conversion and modular_reorganizer steps might become a headache + it will speed up calculations by removing duplicates)
-3. dicoms_extract. This extracts a database of meta-data from DICOMs.
-4. fmp_db_cleaner. FileMakerPro database cleaner.
-5. sarah_db_cleaner. An excel file cleaner.
-6. stats_analysis_fmp_dicoms_db. Statistical analyses on the above databases.
-7. stats_analysis_fmp_dicoms_db_acute. Statistical analyses on the above databases.
-8. optional: ecg_db_generator. Extracts a database of meta-data from ECG filenames.
-9. db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps). Databases realignment and joining with fuzzy matching. It can be used with any two csv files as long as they have two columns: name and final_diagnosis.
-10. finaldbunification. Final disambiguation and clean-up operations.
-11. dicoms_to_nifti. DICOMs to NIFTI batch convertor using dcm2niix, while generating a database of meta-data such as files location (crucial for the data selector to work).
-12. optional: manual preprocess your data (eg, using [reorientation_registration_helper.py](https://github.com/lrq3000/csg_mri_pipelines/blob/master/utils/pathmatcher/reorientation_registration_helper.py) for fmri data). Then, you can use the data selector below to select your already preprocessed data to extract subpopulations with the rules you want. Before this tool, we used to redo the preprocessing every time we extracted a subpopulation from raw data, since DICOMs cannot be reoriented, and there was no single data warehouse, hence original data had to be used as the "source of groundtruth".
-13. modular_reorganizer. This is the data selector, you can make SQL-like requests on dataframes using Python, and it will essentially extract dicoms or nifti files .
-14. db_merger again to merge in the post-nifti conversion additional infos (movement parameters, any quality assurance demographics file you made, etc)
+3. dicoms_extract. Extracts a CSV database of meta-data from DICOMs (ie, names, date of birth, sessions names).
+4. fmp_db_cleaner. FileMakerPro database cleaner, already exported as a CSV file.
+5. sarah_db_cleaner. A specific excel file cleaner.
+7. stats_analysis_fmp_dicoms_db. Statistical analyses on the above databases, and also some data cleaning.
+8. stats_analysis_fmp_dicoms_db_acute. Statistical analyses on the above databases, and also some data cleaning.
+9. optional: ecg_db_generator. Extracts a database of meta-data from ECG filenames.
+
+Demographics databases realignment and merging, with data disambiguation and deduplication using fuzzy and exact matchings:
+10. db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps). Databases realignment and joining with fuzzy matching. It can be used with any two csv files as long as they have two columns: name and final_diagnosis.
+11. finaldbunification. Final disambiguation and clean-up operations.
+
+Neuroimaging data conversion and selector
+12. dicoms_to_nifti. DICOMs to NIFTI batch convertor using dcm2niix, while generating a database of meta-data such as files location (crucial for the data selector to work).
+13. optional: manual preprocess your data (eg, using [reorientation_registration_helper.py](https://github.com/lrq3000/csg_mri_pipelines/blob/master/utils/pathmatcher/reorientation_registration_helper.py) for fmri data). Then, you can use the data selector below to select your already preprocessed data to extract subpopulations with the rules you want. Before this tool, we used to redo the preprocessing every time we extracted a subpopulation from raw data, since DICOMs cannot be reoriented, and there was no single data warehouse, hence original data had to be used as the "source of groundtruth".
+14. modular_reorganizer. This is the data selector, you can make SQL-like requests on dataframes using Python, and it will essentially extract dicoms or nifti files .
+15. db_merger again to merge in the post-nifti conversion additional infos (movement parameters, any quality assurance demographics file you made, etc)
 
 Bonus: dbconcat allows to concatenate (ie, append) 2 csv databases together, which circumvents the buggy concatenation in Microsoft Excel (which can lose separator characters if the csv file is too long).
 
