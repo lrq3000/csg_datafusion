@@ -26,10 +26,12 @@ Inputs extractor and tidying:
 9. optional: ecg_db_generator. Extracts a database of meta-data from ECG filenames.
 
 Demographics databases realignment and merging, with data disambiguation and deduplication using fuzzy and exact matchings:
+
 10. db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps). Databases realignment and joining with fuzzy matching. It can be used with any two csv files as long as they have two columns: name and final_diagnosis.
 11. finaldbunification. Final disambiguation and clean-up operations.
 
-Neuroimaging data conversion and selector
+Neuroimaging data conversion and relational-like data selector:
+
 12. dicoms_to_nifti. DICOMs to NIFTI batch convertor using dcm2niix, while generating a database of meta-data such as files location (crucial for the data selector to work).
 13. optional: manual preprocess your data (eg, using [reorientation_registration_helper.py](https://github.com/lrq3000/csg_mri_pipelines/blob/master/utils/pathmatcher/reorientation_registration_helper.py) for fmri data). Then, you can use the data selector below to select your already preprocessed data to extract subpopulations with the rules you want. Before this tool, we used to redo the preprocessing every time we extracted a subpopulation from raw data, since DICOMs cannot be reoriented, and there was no single data warehouse, hence original data had to be used as the "source of groundtruth".
 14. modular_reorganizer. This is the data selector, you can make SQL-like requests on dataframes using Python, and it will essentially extract dicoms or nifti files .
