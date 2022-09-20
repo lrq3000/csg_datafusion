@@ -10,6 +10,8 @@ What this toolset can do:
 * A Dicoms to Nifti batch convertor, using external tools. This allows to convert in a standardardized layout, then you can do manual preprocessing once and for all on the whole NIFTI files database, and finally you can use the data selector to extract sub-populations anytime you want later, without having to redo the manual preprocessing steps.
 * **Data selector** with freeform rules, similarly to SQL in relational databases but using dataframes and Python.
 
+Note this toolset is unicode ready, it should support any set of characters, although it was optimized for latin-1 datasets.
+
 ## Usage and steps order
 Please place all original databases in a folder "databases_original". After running each step, please move all generated databases into a folder "databases_output".
 
