@@ -5,10 +5,12 @@ This toolset provide several tools to unify databases from multiple sources (dat
 What this toolset can do:
 * **Data extraction** from multiple unformatted and formatted heterogenous data sources (pdf, excel, doc, docx, MRI DICOMs).
 * **Data cleaning**, such as unreadable characters and redundant fields, and detection and removal of impossible data such as [impossible or improbable CRS-R scores](https://pubmed.ncbi.nlm.nih.gov/26944708/).
-* **Data disambiguation and deduplication** using **fuzzy name matching** with custom distance metrics.
+* **Data disambiguation and deduplication** using **fuzzy name matching** with custom distance metrics based on Normalized Levenshtein and Jaccard to allow for simultaneous characters-level and words-level fuzzy matching.
 * **Databases realignment** and joining using relational databases rules (the toolset assumes only two fields are present: name and final_diagnosis, all other fields are dynamically accounted for). This is similar to the rationale that motivated the [tidy data paper by Wickham](https://doi.org/10.18637/jss.v059.i10), although the author did not know of it at the time, so this toolset likely is tidy compatible, accepts untidy data as input and then outputs tidy-like data.
 * A Dicoms to Nifti batch convertor, using external tools. This allows to convert in a standardardized layout, then you can do manual preprocessing once and for all on the whole NIFTI files database, and finally you can use the data selector to extract sub-populations anytime you want later, without having to redo the manual preprocessing steps.
 * **Data selector** with freeform rules, similarly to SQL in relational databases but using dataframes and Python.
+
+This toolset can either be used as intended by executing the Jupyter notebooks of each step outlined in the next section, or the auxiliary functions in the `csg_fileutils/aux.py` script may be of use to programmers of tidy datasets, such as the `merge_two_df()` function.
 
 Note this toolset is unicode ready, it should support any set of characters, although it was optimized for latin-1 datasets.
 
@@ -18,36 +20,41 @@ Please place all original databases in a folder "databases_original". After runn
 Here is the advised steps order for generating a clean unified database from Coma Science Group multiple databases, organized by the type of step:
 
 Inputs extractor and tidying:
-1. extract_fields_from_reports. Extracts a CSV database out of PDF files. The rules are very specific to our own set of PDFs, but the base functions to loop read digitalized and non-digitalized (ie, via OCR) PDF files can easily be re-used.
-2. optional: dicoms_reorganizer (to ensure there is no duplicates, else the dicom_to_nifti conversion and modular_reorganizer steps might become a headache + it will speed up calculations by removing duplicates)
-3. dicoms_extract. Extracts a CSV database of meta-data from DICOMs (ie, names, date of birth, sessions names).
-4. fmp_db_cleaner. FileMakerPro database cleaner, already exported as a CSV file.
-5. sarah_db_cleaner. A specific excel file cleaner.
-7. stats_analysis_fmp_dicoms_db. Statistical analyses on the above databases, and also some data cleaning.
-8. stats_analysis_fmp_dicoms_db_acute. Statistical analyses on the above databases, and also some data cleaning.
-9. optional: ecg_db_generator. Extracts a database of meta-data from ECG filenames.
+
+1. `extract_fields_from_reports`. Extracts a CSV database out of PDF files. The rules are very specific to our own set of PDFs, but the base functions to loop read digitalized and non-digitalized (ie, via OCR) PDF files can easily be re-used.
+2. optional: `dicoms_reorganizer` (to ensure there is no duplicates, else the dicom_to_nifti conversion and modular_reorganizer steps might become a headache + it will speed up calculations by removing duplicates)
+3. `dicoms_extract`. Extracts a CSV database of meta-data from DICOMs (ie, names, date of birth, sessions names).
+4. `fmp_db_cleaner`. FileMakerPro database cleaner, already exported as a CSV file.
+5. `sarah_db_cleaner`. A specific excel file cleaner.
+7. `stats_analysis_fmp_dicoms_db`. Statistical analyses on the above databases, and also some data cleaning.
+8. `stats_analysis_fmp_dicoms_db_acute`. Statistical analyses on the above databases, and also some data cleaning.
+9. optional: `ecg_db_generator`. Extracts a database of meta-data from ECG filenames.
 
 Demographics databases realignment and merging, with data disambiguation and deduplication using fuzzy and exact matchings:
 
-10. db_merger (repeat this to merge any database you want, particularly those that were cleaned by previous steps). Databases realignment and joining with fuzzy matching. It can be used with any two csv files as long as they have two columns: name and final_diagnosis.
-11. finaldbunification. Final disambiguation and clean-up operations.
+10. `db_merger`: Databases realignment and joining with fuzzy matching. It can be used with any two csv files as long as they have two columns: name and final_diagnosis. Repeat this to merge any database you want, particularly those that were cleaned by previous steps.
+11. `finaldbunification`: Final disambiguation and clean-up operations.
 
-Neuroimaging data conversion and relational-like data selector:
+Neuroimaging data conversion and relational-like data selector steps:
 
-12. dicoms_to_nifti. DICOMs to NIFTI batch convertor using dcm2niix, while generating a database of meta-data such as files location (crucial for the data selector to work).
+12. `dicoms_to_nifti`. DICOMs to NIFTI batch convertor using dcm2niix, while generating a database of meta-data such as files location (crucial for the data selector to work).
 13. optional: manual preprocess your data (eg, using [reorientation_registration_helper.py](https://github.com/lrq3000/csg_mri_pipelines/blob/master/utils/pathmatcher/reorientation_registration_helper.py) for fmri data). Then, you can use the data selector below to select your already preprocessed data to extract subpopulations with the rules you want. Before this tool, we used to redo the preprocessing every time we extracted a subpopulation from raw data, since DICOMs cannot be reoriented, and there was no single data warehouse, hence original data had to be used as the "source of groundtruth".
-14. modular_reorganizer. This is the data selector, you can make SQL-like requests on dataframes using Python, and it will essentially extract dicoms or nifti files. This generates clean self-contained subdatabases, with everything needed: the subset of demographics data and the neuroimaging data.
-15. db_merger again to merge in the post-nifti conversion additional infos (movement parameters, any quality assurance demographics file you made, etc)
+14. `modular_reorganizer`: This is the data selector, you can make SQL-like requests on dataframes using Python, and it will essentially extract dicoms or nifti files. This generates clean self-contained subdatabases, with everything needed: the subset of demographics data and the neuroimaging data.
+15. `db_merger`: use again to merge in the post-nifti conversion additional infos (movement parameters, any quality assurance demographics file you made, etc)
 
-Bonus: dbconcat allows to concatenate (ie, append) 2 csv databases together, which circumvents the buggy concatenation in Microsoft Excel (which can lose separator characters if the csv file is too long).
+Additional tools that are not necessary for the pipeline but can be helpful for some uses:
+* `shortendb`: Data selector of a subset of rows out of a more complete CSV file (as generated by this toolset after the finaldbunification step) based on a provided list of names in a second CSV file. This uses fuzzy name matching. This allows to extract relevant information for specific subjects. To extract subjects based on other rules than just fuzzy name matching, such as based on the number of CRS-R, the diagnosis etc, use the `modular_reorganizer` tool.
+* `dbconcat`: Allows to concatenate (ie, append) 2 csv databases together, which circumvents the buggy concatenation in Microsoft Excel (which can lose separator characters if the csv file is too long).
+* `extension_eegdbclean`: Merging and cleaning of meta-data from EEG inputed as a CSV file..
+* `extension_unfieddbstats`: Additional statistics applied on the `finaldbunification` result.
+* `deanonymizer`: Deanonymizes a CSV database based on a mapping file, as generated by `dicoms_anonymizer`.
+* `dicoms_anonymizer`: a DICOM and CSV anonymizer is also present, but this is an old version, the latest anonymizer is now standalone in its own script and with a GUI: [lrq3000/csg_dicoms_anonymizer](https://github.com/lrq3000/csg_dicoms_anonymizer).
 
 Tip: when you convert an input database from .xls or .xlsx (Excel) to csv format to be able to use these notebooks, please make sure to convert with a UTF-8 encoding and a CSV format that can store the BOM (eg, in Office Excel, choose "CSV (Comma delimited)" format when saving, and not "CSV (MS-DOS)" nor "CSV (Macintosh)").
 
 Tip2: CSV files must use the semicolon ";" as a separator (and not the comma ",").
 
 This whole process might seem overwhelming, but a BIG advantage lies in its modularity: if you need to update a specific part (let's say add more calculations on diagnoses dates, or rewrite how final diagnoses are computed, or add a new demographics file source, etc), you can do so without having to recompute everything from the start, you mostly need to update the appropriate notebook or create a new one to add the data you want if it's a calculation (else you don't need to), and then use db_merger to unify into a single database file. Thus, this project was built in such a way as to allow selective updating of precise parts of the pipeline and of the final database, without having to recompute everything, which saves a substantial amount of time (both in calculation and in development).
-
-Note: a DICOM and CSV anonymizer is also present, but this is an old version, the latest anonymizer is now standalone in its own script and with a GUI: lrq3000/csg_dicoms_anonymizer
 
 ## Requirements
 To use the toolset, you need to pip install pandas (if you have installed Anaconda, you don't need to install pandas).
