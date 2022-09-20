@@ -34,7 +34,7 @@ Neuroimaging data conversion and relational-like data selector:
 
 12. dicoms_to_nifti. DICOMs to NIFTI batch convertor using dcm2niix, while generating a database of meta-data such as files location (crucial for the data selector to work).
 13. optional: manual preprocess your data (eg, using [reorientation_registration_helper.py](https://github.com/lrq3000/csg_mri_pipelines/blob/master/utils/pathmatcher/reorientation_registration_helper.py) for fmri data). Then, you can use the data selector below to select your already preprocessed data to extract subpopulations with the rules you want. Before this tool, we used to redo the preprocessing every time we extracted a subpopulation from raw data, since DICOMs cannot be reoriented, and there was no single data warehouse, hence original data had to be used as the "source of groundtruth".
-14. modular_reorganizer. This is the data selector, you can make SQL-like requests on dataframes using Python, and it will essentially extract dicoms or nifti files .
+14. modular_reorganizer. This is the data selector, you can make SQL-like requests on dataframes using Python, and it will essentially extract dicoms or nifti files. This generates clean self-contained subdatabases, with everything needed: the subset of demographics data and the neuroimaging data.
 15. db_merger again to merge in the post-nifti conversion additional infos (movement parameters, any quality assurance demographics file you made, etc)
 
 Bonus: dbconcat allows to concatenate (ie, append) 2 csv databases together, which circumvents the buggy concatenation in Microsoft Excel (which can lose separator characters if the csv file is too long).
