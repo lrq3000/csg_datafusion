@@ -1,5 +1,7 @@
 # CSG Data Fusion by Stephen Karl Larroque, 2016-2019
 
+[![DOI](https://zenodo.org/badge/161193494.svg)](https://doi.org/10.5281/zenodo.14836353)
+
 This toolset provide several tools to unify databases from multiple sources (data fusion).
 
 What this toolset can do:
@@ -81,6 +83,14 @@ Other necessary libraries such as pydicom (git revision 356a51ab4bc54fd18950041e
 
 ## License
 MIT License (see file LICENSE) for the notebooks and csg_fileutil_libs/aux_funcs.py, the rest in csg_fileutil_libs subfolders have their own licenses, compatible with the MIT.
+
+## Citation
+
+If you use this software, please help us support future development by citing it, as it helps secure funding.
+
+Please cite this software as follows:
+
+`csg_datafusion v2.7.3, 2019, Stephen Karl Larroque, DOI: 10.5281/zenodo.14836354`
 
 ## Similar projects
 
