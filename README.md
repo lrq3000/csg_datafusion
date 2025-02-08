@@ -90,7 +90,7 @@ If you use this software, please help us support future development by citing it
 
 Please cite this software as follows:
 
-`csg_datafusion v2.7.3, 2019, Stephen Karl Larroque, DOI: 10.5281/zenodo.14836354`
+`csg_datafusion v2.7.3, 2019, Stephen Karl Larroque, DOI: 10.5281/zenodo.14836354, URL: https://github.com/lrq3000/csg_datafusion/.`
 
 ## Similar projects
 
